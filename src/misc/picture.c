@@ -43,7 +43,10 @@ static void PictureDestroyContext( picture_t *p_picture )
     picture_context_t *ctx = p_picture->context;
     if (ctx != NULL)
     {
+        vlc_video_context *vctx = ctx->vctx;
         ctx->destroy(ctx);
+        if (vctx)
+            vlc_video_context_Release(vctx);
         p_picture->context = NULL;
     }
 }
@@ -193,14 +196,10 @@ int picture_Setup( picture_t *p_picture, const video_format_t *restrict fmt )
  *
  *****************************************************************************/
 
-static picture_priv_t *picture_NewPrivate(const video_format_t *restrict p_fmt,
-                                          size_t extra)
+static bool picture_InitPrivate(const video_format_t *restrict p_fmt,
+                                picture_priv_t *priv,
+                                const picture_resource_t *p_resource)
 {
-    /* */
-    picture_priv_t *priv = malloc(sizeof (*priv) + extra);
-    if( unlikely(priv == NULL) )
-        return NULL;
-
     picture_t *p_picture = &priv->picture;
 
     memset( p_picture, 0, sizeof( *p_picture ) );
@@ -210,24 +209,11 @@ static picture_priv_t *picture_NewPrivate(const video_format_t *restrict p_fmt,
     if( picture_Setup( p_picture, p_fmt ) )
     {
         free( p_picture );
-        return NULL;
+        return false;
     }
 
     atomic_init(&p_picture->refs, 1);
     priv->gc.opaque = NULL;
-
-    return priv;
-}
-
-picture_t *picture_NewFromResource( const video_format_t *p_fmt, const picture_resource_t *p_resource )
-{
-    assert(p_resource != NULL);
-
-    picture_priv_t *priv = picture_NewPrivate(p_fmt, 0);
-    if (unlikely(priv == NULL))
-        return NULL;
-
-    picture_t *p_picture = &priv->picture;
 
     p_picture->p_sys = p_resource->p_sys;
 
@@ -235,6 +221,25 @@ picture_t *picture_NewFromResource( const video_format_t *p_fmt, const picture_r
         priv->gc.destroy = p_resource->pf_destroy;
     else
         priv->gc.destroy = picture_DestroyDummy;
+
+    return true;
+}
+
+picture_t *picture_NewFromResource( const video_format_t *p_fmt, const picture_resource_t *p_resource )
+{
+    assert(p_resource != NULL);
+
+    picture_priv_t *priv = malloc(sizeof(*priv));
+    if (unlikely(priv == NULL))
+        return NULL;
+
+    if (!picture_InitPrivate(p_fmt, priv, p_resource))
+    {
+        free(priv);
+        return NULL;
+    }
+
+    picture_t *p_picture = &priv->picture;
 
     for( int i = 0; i < p_picture->i_planes; i++ )
     {
@@ -248,21 +253,39 @@ picture_t *picture_NewFromResource( const video_format_t *p_fmt, const picture_r
 
 #define PICTURE_SW_SIZE_MAX (UINT32_C(1) << 28) /* 256MB: 8K * 8K * 4*/
 
+struct picture_priv_buffer_t {
+    picture_priv_t   priv;
+    picture_buffer_t res;
+};
+
 picture_t *picture_NewFromFormat(const video_format_t *restrict fmt)
 {
-    picture_priv_t *priv = picture_NewPrivate(fmt, sizeof (picture_buffer_t));
-    if (unlikely(priv == NULL))
+    static_assert(offsetof(struct picture_priv_buffer_t, priv)==0,
+                  "misplaced picture_priv_t, destroy won't work");
+
+    struct picture_priv_buffer_t *privbuf = malloc(sizeof(*privbuf));
+    if (unlikely(privbuf == NULL))
         return NULL;
 
-    priv->gc.destroy = picture_DestroyFromFormat;
+    picture_buffer_t *res = &privbuf->res;
+
+    picture_resource_t pic_res = {
+        .p_sys = res,
+        .pf_destroy = picture_DestroyFromFormat,
+    };
+
+    picture_priv_t *priv = &privbuf->priv;
+    if (!picture_InitPrivate(fmt, priv, &pic_res))
+        goto error;
 
     picture_t *pic = &priv->picture;
     if (pic->i_planes == 0) {
-        pic->p_sys = NULL;
+        pic->p_sys = NULL; // not compatible with picture_DestroyFromFormat
         return pic;
     }
 
     /* Calculate how big the new image should be */
+    assert(pic->i_planes <= PICTURE_PLANE_MAX);
     size_t plane_sizes[PICTURE_PLANE_MAX];
     size_t pic_size = 0;
 
@@ -278,8 +301,6 @@ picture_t *picture_NewFromFormat(const video_format_t *restrict fmt)
     if (unlikely(pic_size >= PICTURE_SW_SIZE_MAX))
         goto error;
 
-    picture_buffer_t *res = (void *)priv->extra;
-
     unsigned char *buf = picture_Allocate(&res->fd, pic_size);
     if (unlikely(buf == NULL))
         goto error;
@@ -287,7 +308,6 @@ picture_t *picture_NewFromFormat(const video_format_t *restrict fmt)
     res->base = buf;
     res->size = pic_size;
     res->offset = 0;
-    pic->p_sys = res;
 
     /* Fill the p_pixels field for each plane */
     for (int i = 0; i < pic->i_planes; i++)
@@ -298,7 +318,7 @@ picture_t *picture_NewFromFormat(const video_format_t *restrict fmt)
 
     return pic;
 error:
-    free(pic);
+    free(privbuf);
     return NULL;
 }
 
@@ -405,12 +425,12 @@ static void picture_DestroyClone(picture_t *clone)
     picture_Release(picture);
 }
 
-picture_t *picture_Clone(picture_t *picture)
+picture_t *picture_InternalClone(picture_t *picture,
+                                 void (*pf_destroy)(picture_t *), void *opaque)
 {
-    /* TODO: merge common code with picture_pool_ClonePicture(). */
     picture_resource_t res = {
         .p_sys = picture->p_sys,
-        .pf_destroy = picture_DestroyClone,
+        .pf_destroy = pf_destroy,
     };
 
     for (int i = 0; i < picture->i_planes; i++) {
@@ -421,9 +441,16 @@ picture_t *picture_Clone(picture_t *picture)
 
     picture_t *clone = picture_NewFromResource(&picture->format, &res);
     if (likely(clone != NULL)) {
-        ((picture_priv_t *)clone)->gc.opaque = picture;
+        ((picture_priv_t *)clone)->gc.opaque = opaque;
         picture_Hold(picture);
+    }
+    return clone;
+}
 
+picture_t *picture_Clone(picture_t *picture)
+{
+    picture_t *clone = picture_InternalClone(picture, picture_DestroyClone, picture);
+    if (likely(clone != NULL)) {
         if (picture->context != NULL)
             clone->context = picture->context->copy(picture->context);
     }

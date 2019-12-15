@@ -131,14 +131,17 @@ typedef struct
     filter_chain_t *p_chain;
 } filter_sys_t;
 
-static picture_t *video_new( filter_t *p_filter )
+static picture_t *video_chain_new( filter_t *p_filter )
 {
-    return filter_NewPicture( p_filter->owner.sys );
+    filter_t *p_chain_parent = p_filter->owner.sys;
+    // the last filter of the internal chain gets its pictures from the original
+    // filter source
+    return filter_NewPicture( p_chain_parent );
 }
 
 static const struct filter_video_callbacks canvas_cbs =
 {
-    .buffer_new = video_new,
+    video_chain_new, NULL,
 };
 
 /*****************************************************************************
@@ -330,9 +333,9 @@ static int Activate( vlc_object_t *p_this )
     fmt.video.i_width = p_filter->fmt_in.video.i_width * fmt.video.i_visible_width / p_filter->fmt_in.video.i_visible_width;
     fmt.video.i_height = p_filter->fmt_in.video.i_height * fmt.video.i_visible_height / p_filter->fmt_in.video.i_visible_height;
 
-    filter_chain_Reset( p_sys->p_chain, &p_filter->fmt_in, &fmt );
+    filter_chain_Reset( p_sys->p_chain, &p_filter->fmt_in, p_filter->vctx_in, &fmt );
     /* Append scaling module */
-    if ( filter_chain_AppendConverter( p_sys->p_chain, NULL, NULL ) )
+    if ( filter_chain_AppendConverter( p_sys->p_chain, NULL ) )
     {
         msg_Err( p_filter, "Could not append scaling filter" );
         free( p_sys );

@@ -139,6 +139,10 @@ case "${host_os}" in
     SYS=dragonfly
     ;;
   darwin*)
+    dnl Workaround possible Xcode 11 bug
+    CFLAGS="${CFLAGS} -fno-stack-check"
+    CXXFLAGS="${CXXFLAGS} -fno-stack-check"
+    OBJCFLAGS="${OBJCFLAGS} -fno-stack-check"
 
     dnl Force gcc "-arch" flag
     ARCH_flag=""
@@ -314,6 +318,8 @@ case "${host_os}" in
     AC_LIBOBJ([freeaddrinfo])
     AC_LIBOBJ([gai_strerror])
     AC_CHECK_FUNCS([if_nametoindex])
+    X86ASMFLAGS="-f aout"
+    X86ASMDEFS="-DARCH_X86_32=1 -DARCH_X86_64=0 -DPREFIX"
     ;;
   *nacl*)
     SYS=nacl
@@ -385,6 +391,12 @@ AM_CONDITIONAL([HAVE_X86ASM], [test -n "${X86ASM}" && test -n "${X86ASMFLAGS}"])
 AM_COND_IF([HAVE_X86ASM], [
   AC_DEFINE([HAVE_X86ASM], [1], [Use external asm on x86.])
 ])
+
+dnl  Because DOLT is not able to handle --with-pic
+dnl  correctly, manually add -DPIC to the options for
+dnl  nasm / yasm here.
+AS_IF([test x$with_pic = xyes], [X86ASMDEFS="${X86ASMDEFS} -DPIC"])
+
 AC_SUBST([X86ASMFLAGS])
 AC_SUBST([X86ASMDEFS])
 
@@ -633,8 +645,8 @@ dnl Check for system libs needed
 need_libc=false
 
 dnl Check for usual libc functions
-AC_CHECK_FUNCS([accept4 daemon fcntl flock fstatvfs fork getenv getpwuid_r isatty memalign mkostemp mmap open_memstream newlocale openat pipe2 pread posix_fadvise posix_madvise posix_memalign setlocale stricmp strnicmp strptime uselocale])
-AC_REPLACE_FUNCS([aligned_alloc atof atoll dirfd fdopendir flockfile fsync getdelim getpid lfind lldiv memrchr nrand48 poll recvmsg rewind sendmsg setenv strcasecmp strcasestr strdup strlcpy strndup strnlen strnstr strsep strtof strtok_r strtoll swab tdestroy tfind timegm timespec_get strverscmp pathconf])
+AC_CHECK_FUNCS([accept4 daemon fcntl flock fstatat fstatvfs fork getmntent_r getenv getpwuid_r isatty memalign mkostemp mmap open_memstream newlocale pipe2 pread posix_fadvise posix_madvise setlocale stricmp strnicmp strptime uselocale])
+AC_REPLACE_FUNCS([aligned_alloc atof atoll dirfd fdopendir flockfile fsync getdelim getpid lfind lldiv memrchr nrand48 poll posix_memalign recvmsg rewind sendmsg setenv strcasecmp strcasestr strdup strlcpy strndup strnlen strnstr strsep strtof strtok_r strtoll swab tdestroy tfind timegm timespec_get strverscmp pathconf])
 AC_REPLACE_FUNCS([gettimeofday])
 AC_CHECK_FUNC(fdatasync,,
   [AC_DEFINE(fdatasync, fsync, [Alias fdatasync() to fsync() if missing.])
@@ -894,7 +906,7 @@ dnl  BSD
 AC_CHECK_HEADERS([netinet/tcp.h netinet/udplite.h sys/param.h sys/mount.h])
 
 dnl  GNU/Linux
-AC_CHECK_HEADERS([features.h getopt.h linux/dccp.h linux/magic.h mntent.h sys/eventfd.h])
+AC_CHECK_HEADERS([features.h getopt.h linux/dccp.h linux/magic.h sys/eventfd.h])
 
 dnl  MacOS
 AC_CHECK_HEADERS([xlocale.h])
@@ -1682,15 +1694,15 @@ asm volatile("ptrue p0.s" ::: "p0");
 ])
 AM_CONDITIONAL([HAVE_SVE], [test "${ac_cv_arm_sve}" = "yes"])
 
-AC_ARG_ENABLE([pointer-auth],
-  AS_HELP_STRING([--disable-pointer-auth],
-    [disable ARMv8.3 Pointer Authentication (default auto)]),, [
-  AS_IF([test "${host_cpu}" = "aarch64"], [enable_ptrauth="yes"] ,[enable_ptrauth="no"])
+AC_ARG_ENABLE([branch-protection],
+  AS_HELP_STRING([--disable-branch-protection],
+    [disable AArch64 branch protection (default auto)]),, [
+  AS_IF([test "${host_cpu}" = "aarch64"], [enable_brprot="yes"] ,[enable_brprot="no"])
 ])
-AS_IF([test "${enable_ptrauth}" != "no"], [
-  AX_CHECK_COMPILE_FLAG([-msign-return-address=non-leaf], [
-    AX_APPEND_FLAG([-msign-return-address=non-leaf], [CFLAGS])
-    AX_APPEND_FLAG([-msign-return-address=non-leaf], [CXXFLAGS])
+AS_IF([test "${enable_brprot}" != "no"], [
+  AX_CHECK_COMPILE_FLAG([-mbranch-protection=standard], [
+    AX_APPEND_FLAG([-mbranch-protection=standard], [CFLAGS])
+    AX_APPEND_FLAG([-mbranch-protection=standard], [CXXFLAGS])
   ])
 ])
 
@@ -2047,7 +2059,7 @@ PKG_ENABLE_MODULES_VLC([NFS], [nfs], [libnfs >= 1.10.0], (support nfs protocol v
 dnl
 dnl smb2 access support
 dnl
-PKG_ENABLE_MODULES_VLC([SMB2], [smb2], [libsmb2 >= 2.0.0], (support smb2 protocol via libsmb2), [auto])
+PKG_ENABLE_MODULES_VLC([SMB2], [smb2], [libsmb2 >= 3.0.0], (support smb2 protocol via libsmb2), [auto])
 
 dnl
 dnl  Video4Linux 2
@@ -2061,6 +2073,19 @@ AS_IF([test "$enable_v4l2" != "no"], [
   ])
 ])
 AM_CONDITIONAL([HAVE_V4L2], [test "${have_v4l2}" != "no"])
+
+dnl
+dnl  NVDEC decoder/encoder
+dnl
+AC_ARG_ENABLE([nvdec], AS_HELP_STRING([--disable-nvdec],
+  [disable NVDEC decoder (default auto)]))
+have_nvdec="no"
+AS_IF([test "$enable_nvdec" != "no"], [
+  AC_CHECK_HEADERS([ffnvcodec/dynlink_loader.h], [
+    have_nvdec="yes"
+  ])
+])
+AM_CONDITIONAL([HAVE_NVDEC], [test "${have_nvdec}" != "no"])
 
 dnl
 dnl special access module for Blackmagic SDI cards
@@ -2309,7 +2334,7 @@ fi
 dnl
 dnl  matroska demux plugin
 dnl
-PKG_WITH_MODULES([MATROSKA], [libebml libmatroska], [
+PKG_WITH_MODULES([MATROSKA], [libebml >= 1.3.6 libmatroska], [
        VLC_ADD_PLUGIN([mkv])
        VLC_ADD_CFLAGS([mkv], [$MATROSKA_CFLAGS])
        VLC_ADD_LIBS([mkv], [$MATROSKA_LIBS])
@@ -2324,7 +2349,7 @@ AC_ARG_ENABLE([mod],
   AS_HELP_STRING([--disable-mod],
     [do not use libmodplug (default auto)]))
 if test "${enable_mod}" != "no" ; then
-    PKG_CHECK_MODULES(LIBMODPLUG, [libmodplug >= 0.8.4 libmodplug != 0.8.8], [
+    PKG_CHECK_MODULES(LIBMODPLUG, [libmodplug >= 0.8.9.0], [
           VLC_ADD_PLUGIN([mod])
           VLC_ADD_CXXFLAGS([mod],[$LIBMODPLUG_CFLAGS])
           VLC_ADD_CFLAGS([mod],[$LIBMODPLUG_CFLAGS]) #modules/demux/mod.c needs CFLAGS_mod, not CXXFLAGS_mod
@@ -3834,15 +3859,7 @@ AM_CONDITIONAL([HAVE_KAI], [test "${have_kai}" = "yes"])
 dnl
 dnl  chromaprint audio track fingerprinter
 dnl
-m4_pushdef([libchromaprint_version], 0.6.0)
-PKG_WITH_MODULES([CHROMAPRINT],[libchromaprint >= libchromaprint_version],
-    VLC_ADD_PLUGIN([stream_out_chromaprint]),
-    AS_IF([test "${enable_chromaprint}" = "yes"],
-        [AC_MSG_ERROR(Library [libchromaprint >= libchromaprint_version] needed for [chromaprint] was not found)],
-        [AC_MSG_WARN(Library [libchromaprint >= libchromaprint_version] needed for [chromaprint] was not found)]
-         ),
-    [(Chromaprint based audio fingerprinter)],[auto])
-m4_popdef([libchromaprint_version])
+PKG_ENABLE_MODULES_VLC([CHROMAPRINT], [stream_out_chromaprint], [libchromaprint >= 0.6.0], [Chromaprint audio fingeprinter], [auto])
 
 dnl
 dnl  Chromecast streaming support
@@ -4436,10 +4453,14 @@ AC_ARG_ENABLE([vlc],
 AM_CONDITIONAL([BUILD_VLC], [test "${enable_vlc}" != "no"])
 
 dnl
-dnl Fuzzer (at the end in order to don't mess dependencies FLAGS)
+dnl Fuzzer (at the end not to mess dependencies FLAGS)
 dnl
 AS_VAR_IF(with_libfuzzer, no, [], [
-    LIBS="-lstdc++ ${LIBM} -L${with_libfuzzer} -lFuzzer"
+    LIBS="-lstdc++ ${LIBM}"
+    AS_IF([test "${with_libfuzzer}" != "yes"], [
+      LIBS="$LIBS -L${with_libfuzzer}"
+    ])
+    LIBS="$LIBS -lFuzzer"
     AX_CHECK_COMPILE_FLAG(-fsanitize-coverage=trace-pc-guard, [
         AX_APPEND_FLAG([-fsanitize-coverage=trace-pc-guard])
         AX_APPEND_FLAG([-fsanitize-coverage=trace-pc-guard], [CXXFLAGS])

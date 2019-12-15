@@ -394,7 +394,7 @@ static void SetupmdirMeta( vlc_meta_t *p_meta, MP4_Box_t *p_box )
         if ( BOXDATA(p_data)->i_blob >= 6 &&
              BOXDATA(p_data)->e_wellknowntype == DATA_WKT_RESERVED )
         {
-            char psz_number[5];
+            char psz_number[6];
             snprintf( psz_number, sizeof( psz_number ), "%"PRIu16, GetWBE(&BOXDATA(p_data)->p_blob[2]) );
             vlc_meta_Set( p_meta, vlc_meta_DiscNumber, psz_number );
             snprintf( psz_number, sizeof( psz_number ), "%"PRIu16, GetWBE(&BOXDATA(p_data)->p_blob[4]) );
@@ -513,7 +513,7 @@ static void SetupID3v2Meta( vlc_meta_t *p_meta, MP4_Box_t *p_box )
                   ID3TAG_Parse_Handler, p_meta );
 }
 
-void SetupMeta( vlc_meta_t *p_meta, MP4_Box_t *p_udta )
+void SetupMeta( vlc_meta_t *p_meta, const MP4_Box_t *p_udta )
 {
     uint32_t i_handler = 0;
     if ( p_udta->p_father )

@@ -265,7 +265,7 @@ static int Open (vout_display_t *vd, const vout_display_cfg_t *cfg,
     /* Get window, connect to X server */
     xcb_connection_t *conn;
     const xcb_screen_t *scr;
-    if (vlc_xcb_parent_Create(vd, cfg, &conn, &scr) == NULL)
+    if (vlc_xcb_parent_Create(vd, cfg->window, &conn, &scr) != VLC_SUCCESS)
     {
         free (sys);
         return VLC_EGENERIC;
@@ -337,6 +337,7 @@ static int Open (vout_display_t *vd, const vout_display_cfg_t *cfg,
     vd->prepare = Prepare;
     vd->display = Display;
     vd->control = Control;
+    vd->close = Close;
 
     (void) context;
     return VLC_SUCCESS;
@@ -354,8 +355,7 @@ vlc_module_begin()
     set_description(N_("X11 video output (XCB)"))
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VOUT)
-    set_capability("vout display", 100)
-    set_callbacks(Open, Close)
+    set_callback_display(Open, 100)
     add_shortcut("xcb-x11", "x11")
 
     add_obsolete_bool("x11-shm") /* obsoleted since 2.0.0 */

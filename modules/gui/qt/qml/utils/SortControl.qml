@@ -27,14 +27,24 @@ Utils.NavigableFocusScope {
     width: childrenRect.width
     height: childrenRect.height
 
-    property variant model
+    property alias model: list.model
     property string textRole
 
+
+    property int popupAlignment: Qt.AlignRight | Qt.AlignBottom
     property int listWidth
     property alias currentIndex: list.currentIndex
+    property alias focusPolicy: button.focusPolicy
+
+    signal sortSelected(var modelData)
 
     onFocusChanged: {
         if (!focus)
+            popup.close()
+    }
+
+    onVisibleChanged: {
+        if (!visible)
             popup.close()
     }
 
@@ -42,7 +52,8 @@ Utils.NavigableFocusScope {
         id: button
 
         size: VLCStyle.icon_normal
-        text: VLCIcons.topbar_sort
+        iconText: VLCIcons.topbar_sort
+        text: qsTr("Sort")
 
         focus: true
 
@@ -52,13 +63,14 @@ Utils.NavigableFocusScope {
             else
                 popup.open()
         }
+
     }
 
     Popup {
         id: popup
 
-        y: root.height - 1
-        x: button.width - width
+        y: (popupAlignment & Qt.AlignBottom) ? (root.height + 1) : - (implicitHeight + 1)
+        x: (popupAlignment & Qt.AlignRight) ? (button.width - width) :  0
         width: root.listWidth
         implicitHeight: contentItem.implicitHeight + padding * 2
         padding: 1
@@ -137,6 +149,7 @@ Utils.NavigableFocusScope {
 
                 onClicked: {
                     root.currentIndex = index
+                    root.sortSelected(model)
                     popup.close()
                 }
             }

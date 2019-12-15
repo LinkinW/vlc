@@ -58,11 +58,17 @@ static PFNGLVDPAUSURFACEACCESSNVPROC            _glVDPAUSurfaceAccessNV;
 static PFNGLVDPAUMAPSURFACESNVPROC              _glVDPAUMapSurfacesNV;
 static PFNGLVDPAUUNMAPSURFACESNVPROC            _glVDPAUUnmapSurfacesNV;
 
+typedef struct {
+    vlc_decoder_device *dec_device;
+} converter_sys_t;
+
 static picture_pool_t *
 tc_vdpau_gl_get_pool(opengl_tex_converter_t const *tc,
                      unsigned int requested_count)
 {
-    return vlc_vdp_output_pool_create(tc->dec_device->opaque,
+    converter_sys_t *sys = tc->priv;
+    vlc_decoder_device *dec_device = sys->dec_device;
+    return vlc_vdp_output_pool_create(GetVDPAUOpaqueDevice(dec_device),
                                       VDP_RGBA_FORMAT_B8G8R8A8,
                                       &tc->fmt, requested_count);
 }
@@ -112,34 +118,50 @@ Close(vlc_object_t *obj)
 {
     opengl_tex_converter_t *tc = (void *)obj;
     _glVDPAUFiniNV(); assert(tc->vt->GetError() == GL_NO_ERROR);
-    vdp_release_x11(tc->dec_device->opaque);
+    converter_sys_t *sys = tc->priv;
+    vlc_decoder_device *dec_device = sys->dec_device;
+    vlc_decoder_device_Release(dec_device);
 }
 
 static int
 Open(vlc_object_t *obj)
 {
     opengl_tex_converter_t *tc = (void *) obj;
-    if (tc->dec_device == NULL
-     || tc->dec_device->type != VLC_DECODER_DEVICE_VDPAU
+    if (tc->vctx == NULL)
+        return VLC_EGENERIC;
+    vlc_decoder_device *dec_device = vlc_video_context_HoldDevice(tc->vctx);
+    if (GetVDPAUOpaqueDevice(dec_device) == NULL
      || (tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_420
       && tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_422
       && tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_444)
      || !vlc_gl_StrHasToken(tc->glexts, "GL_NV_vdpau_interop")
      || tc->gl->surface->type != VOUT_WINDOW_TYPE_XID)
+    {
+        vlc_decoder_device_Release(dec_device);
         return VLC_EGENERIC;
+    }
+
+    converter_sys_t *sys = vlc_obj_malloc(VLC_OBJECT(tc), sizeof(*sys));
+    if (unlikely(sys == NULL))
+    {
+        vlc_decoder_device_Release(dec_device);
+        return VLC_ENOMEM;
+    }
+    sys->dec_device = dec_device;
 
     tc->fmt.i_chroma = VLC_CODEC_VDPAU_OUTPUT;
 
     VdpDevice device;
-    vdp_t *vdp = tc->dec_device->opaque;
-    vdp_hold_x11(vdp, &device);
+    vdpau_decoder_device_t *vdpau_dev = GetVDPAUOpaqueDevice(dec_device);
+    vdp_t *vdp = vdpau_dev->vdp;
+    device = vdpau_dev->device;
 
     void *vdp_gpa;
     if (vdp_get_proc_address(vdp, device,
                              VDP_FUNC_ID_GET_PROC_ADDRESS, &vdp_gpa)
         != VDP_STATUS_OK)
     {
-        vdp_release_x11(vdp);
+        vlc_decoder_device_Release(dec_device);
         return VLC_EGENERIC;
     }
 
@@ -147,7 +169,7 @@ Open(vlc_object_t *obj)
     _##fct = vlc_gl_GetProcAddress(tc->gl, #fct); \
     if (!_##fct) \
     { \
-        vdp_release_x11(vdp); \
+        vlc_decoder_device_Release(dec_device); \
         return VLC_EGENERIC; \
     }
     SAFE_GPA(glVDPAUInitNV);
@@ -174,35 +196,42 @@ Open(vlc_object_t *obj)
 
     tc->pf_get_pool = tc_vdpau_gl_get_pool;
     tc->pf_update = tc_vdpau_gl_update;
+    tc->priv = sys;
 
     return VLC_SUCCESS;
 }
 
 static void
-DecoderContextClose(vlc_decoder_device *device)
+DecoderDeviceClose(vlc_decoder_device *device)
 {
-    vdp_release_x11(device->opaque);
+    vdpau_decoder_device_t *vdpau_dev = GetVDPAUOpaqueDevice(device);
+    vdp_release_x11(vdpau_dev->vdp);
 }
 
 static const struct vlc_decoder_device_operations dev_ops = {
-    .close = DecoderContextClose,
+    .close = DecoderDeviceClose,
 };
 
 static int
-DecoderContextOpen(vlc_decoder_device *device, vout_window_t *window)
+DecoderDeviceOpen(vlc_decoder_device *device, vout_window_t *window)
 {
     if (!window || !vlc_xlib_init(VLC_OBJECT(window)))
         return VLC_EGENERIC;
 
-    vdp_t *vdp;
-    VdpDevice vdpdevice;
+    vdpau_decoder_device_t *sys = vlc_obj_malloc(VLC_OBJECT(device), sizeof(*sys));
+    if (unlikely(sys == NULL))
+        return VLC_ENOMEM;
 
-    if (vdp_get_x11(window->display.x11, -1, &vdp, &vdpdevice) != VDP_STATUS_OK)
+    if (vdp_get_x11(window->display.x11, -1,
+                    &sys->vdp, &sys->device) != VDP_STATUS_OK)
+    {
+        vlc_obj_free(VLC_OBJECT(device), sys);
         return VLC_EGENERIC;
+    }
 
     device->ops = &dev_ops;
     device->type = VLC_DECODER_DEVICE_VDPAU;
-    device->opaque = vdp;
+    device->opaque = sys;
     return VLC_SUCCESS;
 }
 
@@ -214,6 +243,5 @@ vlc_module_begin ()
     set_subcategory(SUBCAT_VIDEO_VOUT)
     add_shortcut("vdpau")
     add_submodule()
-        set_capability("decoder device", 3)
-        set_callbacks(DecoderContextOpen, DecoderContextClose)
+        set_callback_dec_device(DecoderDeviceOpen, 3)
 vlc_module_end ()

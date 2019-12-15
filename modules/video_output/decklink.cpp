@@ -220,7 +220,6 @@ struct decklink_sys_t
     /* single video module exclusive */
     struct
     {
-        video_format_t currentfmt;
         bool tenbits;
         uint8_t afd, ar;
         int nosignal_delay;
@@ -234,8 +233,9 @@ struct decklink_sys_t
  * Local prototypes.
  *****************************************************************************/
 
-static int  OpenVideo           (vlc_object_t *);
-static void CloseVideo          (vlc_object_t *);
+static int  OpenVideo           (vout_display_t *, const vout_display_cfg_t *,
+                                 video_format_t *, vlc_video_context *);
+static void CloseVideo          (vout_display_t *);
 static int  OpenAudio           (vlc_object_t *);
 static void CloseAudio          (vlc_object_t *);
 
@@ -254,8 +254,7 @@ vlc_module_begin()
     set_description (N_("DeckLink Video Output module"))
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VOUT)
-    set_capability("vout display", 0)
-    set_callbacks (OpenVideo, CloseVideo)
+    set_callback_display(OpenVideo, 0)
     set_section(N_("DeckLink Video Options"), NULL)
     add_string(VIDEO_CFG_PREFIX "video-connection", "sdi",
                 VIDEO_CONNECTION_TEXT, VIDEO_CONNECTION_LONGTEXT, true)
@@ -364,7 +363,6 @@ static void ReleaseDLSys(vlc_object_t *obj, int i_cat)
         /* Clean video specific */
         if (sys->video.pic_nosignal)
             picture_Release(sys->video.pic_nosignal);
-        video_format_Clean(&sys->video.currentfmt);
 
         free(sys);
         var_Destroy(libvlc, "decklink-sys");
@@ -405,7 +403,7 @@ static BMDVideoConnection getVConn(vout_display_t *vd, BMDVideoConnection mask)
 /*****************************************************************************
  *
  *****************************************************************************/
-static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys)
+static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys, video_format_t *fmt)
 {
 #define CHECK(message) do { \
     if (result != S_OK) \
@@ -513,7 +511,7 @@ static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys)
     CHECK("Could not set video output connection");
 
     p_display_mode = Decklink::Helper::MatchDisplayMode(VLC_OBJECT(vd), sys->p_output,
-                                          &vd->fmt, wanted_mode_id);
+                                          &vd->source, wanted_mode_id);
     if(p_display_mode == NULL)
     {
         msg_Err(vd, "Could not negociate a compatible display mode");
@@ -570,8 +568,7 @@ static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys)
         result = sys->p_output->EnableVideoOutput(mode_id, flags);
         CHECK("Could not enable video output");
 
-        video_format_t *fmt = &sys->video.currentfmt;
-        video_format_Copy(fmt, &vd->fmt);
+        video_format_Copy(fmt, &vd->source);
         fmt->i_width = fmt->i_visible_width = p_display_mode->GetWidth();
         fmt->i_height = fmt->i_visible_height = p_display_mode->GetHeight();
         fmt->i_x_offset = 0;
@@ -623,6 +620,7 @@ error:
         decklink_iterator->Release();
     if (p_display_mode)
         p_display_mode->Release();
+    video_format_Clean(fmt);
 
     vlc_mutex_unlock(&sys->lock);
 
@@ -771,14 +769,13 @@ static int ControlVideo(vout_display_t *vd, int query, va_list args)
     return VLC_EGENERIC;
 }
 
-static int OpenVideo(vlc_object_t *p_this)
+static int OpenVideo(vout_display_t *vd, const vout_display_cfg_t *cfg,
+                     video_format_t *fmtp, vlc_video_context *context)
 {
-    vout_display_t *vd = (vout_display_t *)p_this;
-    decklink_sys_t *sys = HoldDLSys(p_this, VIDEO_ES);
+    VLC_UNUSED(cfg); VLC_UNUSED(context);
+    decklink_sys_t *sys = HoldDLSys(VLC_OBJECT(vd), VIDEO_ES);
     if(!sys)
         return VLC_ENOMEM;
-
-    vd->sys = (vout_display_sys_t*) sys;
 
     bool b_init;
     vlc_mutex_lock(&sys->lock);
@@ -787,42 +784,41 @@ static int OpenVideo(vlc_object_t *p_this)
 
     if( b_init )
     {
-        sys->video.tenbits = var_InheritBool(p_this, VIDEO_CFG_PREFIX "tenbits");
-        sys->video.nosignal_delay = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "nosignal-delay");
-        sys->video.afd = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "afd");
-        sys->video.ar = var_InheritInteger(p_this, VIDEO_CFG_PREFIX "ar");
+        sys->video.tenbits = var_InheritBool(vd, VIDEO_CFG_PREFIX "tenbits");
+        sys->video.nosignal_delay = var_InheritInteger(vd, VIDEO_CFG_PREFIX "nosignal-delay");
+        sys->video.afd = var_InheritInteger(vd, VIDEO_CFG_PREFIX "afd");
+        sys->video.ar = var_InheritInteger(vd, VIDEO_CFG_PREFIX "ar");
         sys->video.pic_nosignal = NULL;
 
-        if (OpenDecklink(vd, sys) != VLC_SUCCESS)
+        if (OpenDecklink(vd, sys, fmtp) != VLC_SUCCESS)
         {
-            CloseVideo(p_this);
+            CloseVideo(vd);
             return VLC_EGENERIC;
         }
 
-        char *pic_file = var_InheritString(p_this, VIDEO_CFG_PREFIX "nosignal-image");
+        char *pic_file = var_InheritString(vd, VIDEO_CFG_PREFIX "nosignal-image");
         if (pic_file)
         {
-            sys->video.pic_nosignal = sdi::Generator::Picture(p_this, pic_file, &vd->fmt);
+            sys->video.pic_nosignal = sdi::Generator::Picture(VLC_OBJECT(vd), pic_file, fmtp);
             if (!sys->video.pic_nosignal)
-                msg_Err(p_this, "Could not create no signal picture");
+                msg_Err(vd, "Could not create no signal picture");
             free(pic_file);
         }
     }
 
-    /* vout must adapt */
-    video_format_Clean( &vd->fmt );
-    video_format_Copy( &vd->fmt, &sys->video.currentfmt );
-
     vd->prepare = PrepareVideo;
     vd->display = NULL;
     vd->control = ControlVideo;
+    vd->close = CloseVideo;
+
+    vd->sys = (vout_display_sys_t*) sys;
 
     return VLC_SUCCESS;
 }
 
-static void CloseVideo(vlc_object_t *p_this)
+static void CloseVideo(vout_display_t *vd)
 {
-    ReleaseDLSys(p_this, VIDEO_ES);
+    ReleaseDLSys(VLC_OBJECT(vd), VIDEO_ES);
 }
 
 /*****************************************************************************

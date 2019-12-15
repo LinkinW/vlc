@@ -82,7 +82,6 @@ struct vout_display_sys_t {
 
     uint32_t        fb[MAXHWBUF];
     picture_t       *picture;
-    picture_pool_t  *pool;
 
     unsigned int    front_buf;
 
@@ -495,6 +494,21 @@ static bool ChromaNegotiation(vout_display_t *vd)
     return false;
 }
 
+static void CustomDestroyPicture(picture_t *p_picture)
+{
+    picture_sys_t *psys = (picture_sys_t*)p_picture->p_sys;
+    vout_display_sys_t *sys = (vout_display_sys_t *)psys->p_voutsys;
+    int c;
+
+    for (c = 0; c < MAXHWBUF; c++)
+        DestroyFB(sys, c);
+
+    drmSetClientCap(sys->drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 0);
+    drmDropMaster(sys->drm_fd);
+    vlc_close(sys->drm_fd);
+    sys->drm_fd = 0;
+    free(p_picture->p_sys);
+}
 
 static int OpenDisplay(vout_display_t *vd)
 {
@@ -573,6 +587,31 @@ static int OpenDisplay(vout_display_t *vd)
     if (!found_connector)
         goto err_out;
 
+    picture_sys_t *psys = calloc(1, sizeof(*psys));
+    if (psys == NULL)
+        goto err_out;
+
+    picture_resource_t rsc = {
+        .p_sys = psys,
+        .pf_destroy = CustomDestroyPicture,
+    };
+
+    for (size_t i = 0; i < PICTURE_PLANE_MAX; i++) {
+        rsc.p[i].p_pixels = sys->map[0] + sys->offsets[i];
+        rsc.p[i].i_lines  = sys->height;
+        rsc.p[i].i_pitch  = sys->stride;
+    }
+
+    psys->p_voutsys = sys;
+
+    sys->picture = picture_NewFromResource(&vd->fmt, &rsc);
+
+    if (!sys->picture)
+    {
+        free(psys);
+        goto err_out;
+    }
+
     return VLC_SUCCESS;
 err_out:
     drmDropMaster(sys->drm_fd);
@@ -598,61 +637,12 @@ static int Control(vout_display_t *vd, int query, va_list args)
 }
 
 
-static void CustomDestroyPicture(picture_t *p_picture)
+static void Prepare(vout_display_t *vd, picture_t *pic, subpicture_t *subpic,
+                    vlc_tick_t date)
 {
-    picture_sys_t *psys = (picture_sys_t*)p_picture->p_sys;
-    vout_display_sys_t *sys = (vout_display_sys_t *)psys->p_voutsys;
-    int c;
-
-    for (c = 0; c < MAXHWBUF; c++)
-        DestroyFB(sys, c);
-
-    drmSetClientCap(sys->drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 0);
-    drmDropMaster(sys->drm_fd);
-    vlc_close(sys->drm_fd);
-    sys->drm_fd = 0;
-    free(p_picture->p_sys);
-}
-
-
-static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
-{
-    VLC_UNUSED(count);
+    VLC_UNUSED(subpic); VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
-    picture_sys_t *psys;
-    picture_resource_t rsc;
-    int i;
-
-    if (!sys->pool && !sys->picture) {
-        memset(&rsc, 0, sizeof(rsc));
-
-        for (i = 0; i < PICTURE_PLANE_MAX; i++) {
-            rsc.p[i].p_pixels = sys->map[0]+sys->offsets[i];
-            rsc.p[i].i_lines  = sys->height;
-            rsc.p[i].i_pitch  = sys->stride;
-        }
-
-        psys = calloc(1, sizeof(*psys));
-        if (psys == NULL)
-            return NULL;
-
-        psys->p_voutsys = sys;
-        rsc.p_sys = psys;
-        rsc.pf_destroy = CustomDestroyPicture;
-
-        sys->picture = picture_NewFromResource(&vd->fmt, &rsc);
-
-        if (!sys->picture) {
-            free((void*)psys);
-            return NULL;
-        }
-
-        sys->pool = picture_pool_New(1, &sys->picture);
-        if (!sys->pool)
-            picture_Release(sys->picture);
-    }
-
-    return sys->pool;
+    picture_Copy( sys->picture, pic );
 }
 
 
@@ -687,8 +677,8 @@ static void Close(vout_display_t *vd)
 {
     vout_display_sys_t *sys = vd->sys;
 
-    if (sys->pool)
-        picture_pool_Release(sys->pool);
+    if (sys->picture)
+        picture_Release(sys->picture);
 
     if (sys->drm_fd)
         drmDropMaster(sys->drm_fd);
@@ -732,7 +722,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
         chroma = NULL;
     } else {
         sys->vlc_fourcc = fmtp->i_chroma;
-        msg_Dbg(vd, "Chroma %4s invalid, using default", chroma);
+        msg_Dbg(vd, "Chroma not defined, using default");
     }
 
     chroma = var_InheritString(vd, "kms-drm-chroma");
@@ -764,10 +754,10 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     fmt.i_chroma = sys->vlc_fourcc;
     *fmtp = fmt;
 
-    vd->pool    = Pool;
-    vd->prepare = NULL;
+    vd->prepare = Prepare;
     vd->display = Display;
     vd->control = Control;
+    vd->close = Close;
 
     (void) context;
     return VLC_SUCCESS;
@@ -788,6 +778,5 @@ vlc_module_begin ()
     add_string( "kms-drm-chroma", NULL, DRM_CHROMA_TEXT, DRM_CHROMA_LONGTEXT,
                 true)
     set_description("Linux kernel mode setting video output")
-    set_capability("vout display", 30)
-    set_callbacks(Open, Close)
+    set_callback_display(Open, 30)
 vlc_module_end ()

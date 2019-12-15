@@ -74,7 +74,6 @@ static void Close(vout_display_t *vd);
 vlc_module_begin()
     set_shortname(N_("MMAL vout"))
     set_description(N_("MMAL-based vout plugin for Raspberry Pi"))
-    set_capability("vout display", 90)
     add_shortcut("mmal_vout")
     add_integer(MMAL_LAYER_NAME, 1, MMAL_LAYER_TEXT, MMAL_LAYER_LONGTEXT, false)
     add_bool(MMAL_BLANK_BACKGROUND_NAME, true, MMAL_BLANK_BACKGROUND_TEXT,
@@ -83,7 +82,7 @@ vlc_module_begin()
                     MMAL_ADJUST_REFRESHRATE_LONGTEXT, false)
     add_bool(MMAL_NATIVE_INTERLACED, false, MMAL_NATIVE_INTERLACE_TEXT,
                     MMAL_NATIVE_INTERLACE_LONGTEXT, false)
-    set_callbacks(Open, Close)
+    set_callback_display(Open, 90)
 vlc_module_end()
 
 struct dmx_region_t {
@@ -302,6 +301,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     vd->prepare = vd_prepare;
     vd->display = vd_display;
     vd->control = vd_control;
+    vd->close = Close;
 
     vc_tv_register_callback(tvservice_cb, vd);
 
@@ -326,7 +326,6 @@ out:
 
 static void Close(vout_display_t *vd)
 {
-    vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys = vd->sys;
     char response[20]; /* answer is hvs_update_fields=%1d */
     unsigned i;

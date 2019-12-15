@@ -126,6 +126,13 @@ CXX := clang++
 endif
 endif
 
+# -fno-stack-check is a workaround for a possible
+# bug in Xcode 11 or macOS 10.15+
+ifdef HAVE_DARWIN_OS
+EXTRA_CFLAGS += -fno-stack-check
+XCODE_FLAGS += OTHER_CFLAGS=-fno-stack-check
+endif
+
 ifdef HAVE_MACOSX
 EXTRA_CXXFLAGS += -stdlib=libc++
 ifeq ($(ARCH),x86_64)
@@ -189,12 +196,6 @@ LDFLAGS := $(LDFLAGS) -L$(PREFIX)/lib $(EXTRA_LDFLAGS)
 ifdef ENABLE_PDB
 CFLAGS := $(CFLAGS) -gcodeview
 CXXFLAGS := $(CXXFLAGS) -gcodeview
-endif
-
-ifndef WITH_OPTIMIZATION
-DBGOPTIMFLAGS = -g -O0
-else
-DBGOPTIMFLAGS = -g -O2
 endif
 
 # Do not export those! Use HOSTVARS.
@@ -311,32 +312,42 @@ HOSTCONF += --with-pic
 PIC := -fPIC
 endif
 
+# For cross-compilation with meson, do not set compiler and flags
+# in HOSTVARS as meson will always use them for the BUILD machine compiler!
+MESON_HOST_FLAGS := \
+	CPPFLAGS="$(CPPFLAGS)" \
+	CFLAGS="$(CFLAGS)" \
+	CXXFLAGS="$(CXXFLAGS)" \
+	LDFLAGS="$(LDFLAGS)"
+ifdef HAVE_CROSS_COMPILE
+HOSTVARS_MESON := PATH="$(PREFIX)/bin:$(PATH)"
+else
+HOSTVARS_MESON := $(HOSTTOOLS) $(MESON_HOST_FLAGS)
+endif
+
+# Add these flags after Meson consumed the CFLAGS/CXXFLAGS
+ifndef WITH_OPTIMIZATION
+CFLAGS := $(CFLAGS) -g -O0
+CXXFLAGS := $(CXXFLAGS) -g -O0
+else
+CFLAGS := $(CFLAGS) -g -O2
+CXXFLAGS := $(CXXFLAGS) -g -O2
+endif
+
 HOSTTOOLS := \
 	CC="$(CC)" CXX="$(CXX)" LD="$(LD)" \
 	AR="$(AR)" CCAS="$(CCAS)" RANLIB="$(RANLIB)" STRIP="$(STRIP)" \
 	PATH="$(PREFIX)/bin:$(PATH)"
 HOSTVARS := $(HOSTTOOLS) \
 	CPPFLAGS="$(CPPFLAGS)" \
-	CFLAGS="$(CFLAGS) $(DBGOPTIMFLAGS)" \
-	CXXFLAGS="$(CXXFLAGS) $(DBGOPTIMFLAGS)" \
-	LDFLAGS="$(LDFLAGS)"
-HOSTVARS_PIC := $(HOSTTOOLS) \
-	CPPFLAGS="$(CPPFLAGS) $(PIC)" \
-	CFLAGS="$(CFLAGS) $(DBGOPTIMFLAGS) $(PIC)" \
-	CXXFLAGS="$(CXXFLAGS) $(DBGOPTIMFLAGS) $(PIC)" \
-	LDFLAGS="$(LDFLAGS)"
-
-# For cross-compilation with meson, do not set compiler and flags
-# in HOSTVARS as meson will always use them for the BUILD machine compiler!
-ifdef HAVE_CROSS_COMPILE
-HOSTVARS_MESON := PATH="$(PREFIX)/bin:$(PATH)"
-else
-HOSTVARS_MESON := $(HOSTTOOLS) \
-	CPPFLAGS="$(CPPFLAGS)" \
 	CFLAGS="$(CFLAGS)" \
 	CXXFLAGS="$(CXXFLAGS)" \
 	LDFLAGS="$(LDFLAGS)"
-endif
+HOSTVARS_PIC := $(HOSTTOOLS) \
+	CPPFLAGS="$(CPPFLAGS) $(PIC)" \
+	CFLAGS="$(CFLAGS) $(PIC)" \
+	CXXFLAGS="$(CXXFLAGS) $(PIC)" \
+	LDFLAGS="$(LDFLAGS)"
 
 download_git = \
 	rm -Rf -- "$(@:.tar.xz=)" && \
@@ -474,8 +485,8 @@ vlc-contrib-$(HOST)-latest.tar.bz2:
 prebuilt: vlc-contrib-$(HOST)-latest.tar.bz2
 	$(RM) -r $(PREFIX)
 	-$(UNPACK)
-	mv $(HOST) $(TOPDST)
-	cd $(PREFIX) && $(SRC)/change_prefix.sh
+	mv $(HOST) $(PREFIX)
+	cd $(PREFIX) && $(abspath $(SRC))/change_prefix.sh
 ifdef HAVE_WIN32
 ifndef HAVE_CROSS_COMPILE
 	$(RM) `find $(PREFIX)/bin | file -f- | grep ELF | awk -F: '{print $$1}' | xargs`
@@ -491,7 +502,10 @@ package: install
 		cd share; rm -Rf man doc gtk-doc info lua projectM; cd ..; \
 		rm -Rf man sbin etc lib/lua lib/sidplay
 	cd tmp/$(notdir $(PREFIX)) && $(abspath $(SRC))/change_prefix.sh $(PREFIX) @@CONTRIB_PREFIX@@
-	(cd tmp && tar c $(notdir $(PREFIX))/) | bzip2 -c > ../vlc-contrib-$(HOST)-$(DATE).tar.bz2
+ifneq ($(notdir $(PREFIX)),$(HOST))
+	(cd tmp && mv $(notdir $(PREFIX)) $(HOST))
+endif
+	(cd tmp && tar c $(HOST)/) | bzip2 -c > ../vlc-contrib-$(HOST)-$(DATE).tar.bz2
 
 list:
 	@echo All packages:
@@ -529,6 +543,13 @@ endif
 ifdef HAVE_DARWIN_OS
 CMAKE_SYSTEM_NAME = Darwin
 endif
+ifdef HAVE_ANDROID
+CMAKE_SYSTEM_NAME = Android
+endif
+
+ifdef HAVE_ANDROID
+CFLAGS += -DANDROID_NATIVE_API_LEVEL=$(ANDROID_API)
+endif
 
 # CMake toolchain
 toolchain.cmake:
@@ -538,7 +559,30 @@ ifndef WITH_OPTIMIZATION
 else
 	echo "set(CMAKE_BUILD_TYPE Release)" >> $@
 endif
+
+ifdef HAVE_ANDROID
+# Android has special rules for detecting the architecture
+# and CMAKE_SYSTEM_PROCESSOR should match them.
+	echo "set(CMAKE_SYSTEM_VERSION ${ANDROID_API})" >> $@
+	echo "set(CMAKE_ANDROID_ARCH_ABI ${ANDROID_ABI})" >> $@
+
+# From CMake manual:
+# When Cross Compiling for Android and CMAKE_ANDROID_ARCH_ABI is set to
+# armeabi-v7a set CMAKE_ANDROID_ARM_NEON to ON to target ARM NEON devices.
+ifeq ($(ANDROID_ABI),armeabi-v7a)
+ifdef HAVE_NEON
+	echo "set(CMAKE_ANDROID_ARM_NEON ON)" >> $@
+else
+	echo "set(CMAKE_ANDROID_ARM_NEON OFF)" >> $@
+endif
+endif
+
+# Else use the default expected behaviour for other platforms
+else
 	echo "set(CMAKE_SYSTEM_PROCESSOR $(ARCH))" >> $@
+endif
+
+
 	if test -n "$(CMAKE_SYSTEM_NAME)"; then \
 		echo "set(CMAKE_SYSTEM_NAME $(CMAKE_SYSTEM_NAME))" >> $@; \
 	fi;
@@ -590,25 +634,29 @@ else
 ifdef HAVE_DARWIN_OS
 	MESON_SYSTEM_NAME = darwin
 else
+ifdef HAVE_ANDROID
+	MESON_SYSTEM_NAME = android
+else
 ifdef HAVE_LINUX
 	# android has also system = linux and defines HAVE_LINUX
 	MESON_SYSTEM_NAME = linux
+else
+	$(error "No meson system name known for this target")
+endif
 endif
 endif
 endif
 
 crossfile.meson: $(SRC)/gen-meson-crossfile.py
 	$(HOSTTOOLS) \
-	CPPFLAGS="$(CPPFLAGS)" \
-	CFLAGS="$(CFLAGS)" \
-	CXXFLAGS="$(CXXFLAGS)" \
-	LDFLAGS="$(LDFLAGS)" \
+	$(MESON_HOST_FLAGS) \
 	WINDRES="$(WINDRES)" \
 	PKG_CONFIG="$(PKG_CONFIG)" \
 	HOST_SYSTEM="$(MESON_SYSTEM_NAME)" \
 	HOST_ARCH="$(subst i386,x86,$(ARCH))" \
 	HOST="$(HOST)" \
 	$(SRC)/gen-meson-crossfile.py $@
+	cat $@
 
 # Default pattern rules
 .sum-%: $(SRC)/%/SHA512SUMS

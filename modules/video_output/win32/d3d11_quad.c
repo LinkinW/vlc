@@ -1048,10 +1048,6 @@ int D3D11_SetupQuad(vlc_object_t *o, d3d11_device_t *d3d_dev, const video_format
     ShaderUpdateConstants(o, d3d_dev, quad, PS_CONST_COLORSPACE, &colorspace);
 
 
-    quad->picSys.formatTexture = quad->textureFormat->formatTexture;
-    quad->picSys.context = d3d_dev->d3dcontext;
-    ID3D11DeviceContext_AddRef(quad->picSys.context);
-
     if (!D3D11_UpdateQuadPosition(o, d3d_dev, quad, output, orientation))
         return VLC_EGENERIC;
 
@@ -1115,6 +1111,7 @@ void D3D11_UpdateViewport(d3d_quad_t *quad, const RECT *rect, const d3d_format_t
                 break;
             }
             /* fallthrough */
+        case VLC_CODEC_I420_10L:
         case VLC_CODEC_I420:
             quad->cropViewport[1].TopLeftX = quad->cropViewport[0].TopLeftX / 2;
             quad->cropViewport[1].TopLeftY = quad->cropViewport[0].TopLeftY / 2;

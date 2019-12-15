@@ -128,7 +128,7 @@ tc_yuv_base_init(opengl_tex_converter_t *tc, GLenum tex_target,
             return VLC_EGENERIC;
 
         /* Do a bit shift if samples are stored on LSB */
-        if (chroma != VLC_CODEC_P010)
+        if (chroma != VLC_CODEC_P010 && chroma != VLC_CODEC_P016)
             yuv_range_correction = (float)((1 << 16) - 1)
                                  / ((1 << desc->pixel_bits) - 1);
     }
@@ -507,7 +507,7 @@ opengl_fragment_shader_init_impl(opengl_tex_converter_t *tc, GLenum tex_target,
 
     const vlc_chroma_description_t *desc = vlc_fourcc_GetChromaDescription(chroma);
     if (desc == NULL)
-        return VLC_EGENERIC;
+        return 0;
 
     if (chroma == VLC_CODEC_XYZ12)
         return xyz12_shader_init(tc);

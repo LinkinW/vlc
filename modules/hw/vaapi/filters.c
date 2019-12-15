@@ -32,70 +32,6 @@
 #include <vlc_plugin.h>
 #include "filters.h"
 
-/*******************
- * Instance holder *
- *******************/
-
-/* XXX: Static filters (like deinterlace) may not have access to a picture
- * allocated by the vout if it's not the first filter in the chain. That vout
- * picture is needed to get the VADisplay instance. Therefore, we store the
- * fist vaapi instance set by a filter so that it can be re-usable by others
- * filters. The instance is ref-counted, so there is no problem if the main
- * filter is destroyed before the other ones. */
-static struct {
-    vlc_mutex_t lock;
-    vlc_decoder_device *dec_device;
-    filter_t *owner;
-} holder = { VLC_STATIC_MUTEX, NULL, NULL };
-
-vlc_decoder_device *
-vlc_vaapi_FilterHoldInstance(filter_t *filter, VADisplay *dpy)
-{
-
-    picture_t *pic = filter_NewPicture(filter);
-    if (!pic)
-        return NULL;
-
-    if (!vlc_vaapi_IsChromaOpaque(pic->format.i_chroma))
-    {
-        picture_Release(pic);
-        return NULL;
-    }
-
-    vlc_decoder_device *dec_device = NULL;
-
-    vlc_mutex_lock(&holder.lock);
-    if (holder.dec_device != NULL)
-    {
-        dec_device = vlc_decoder_device_Hold(holder.dec_device);
-        *dpy = dec_device->opaque;
-    }
-    else
-    {
-        holder.owner = filter;
-        holder.dec_device = dec_device = pic->p_sys ?
-            vlc_vaapi_PicSysHoldInstance(pic->p_sys, dpy) : NULL;
-        assert(dec_device == NULL || dec_device->type == VLC_DECODER_DEVICE_VAAPI);
-    }
-    vlc_mutex_unlock(&holder.lock);
-    picture_Release(pic);
-
-    return dec_device;
-}
-
-void
-vlc_vaapi_FilterReleaseInstance(filter_t *filter,
-                                vlc_decoder_device *dec_device)
-{
-    vlc_decoder_device_Release(dec_device);
-    vlc_mutex_lock(&holder.lock);
-    if (filter == holder.owner)
-    {
-        holder.dec_device = NULL;
-        holder.owner = NULL;
-    }
-    vlc_mutex_unlock(&holder.lock);
-}
 /********************************
  * Common structures and macros *
  ********************************/
@@ -361,6 +297,8 @@ Open(filter_t * filter,
 {
     filter_sys_t *      filter_sys;
 
+    if (filter->vctx_in == NULL ||
+        vlc_video_context_GetType(filter->vctx_in) != VLC_VIDEO_CONTEXT_VAAPI)
     if (!vlc_vaapi_IsChromaOpaque(filter->fmt_out.video.i_chroma) ||
         !video_format_IsSimilar(&filter->fmt_out.video, &filter->fmt_in.video))
         return VLC_EGENERIC;
@@ -375,16 +313,14 @@ Open(filter_t * filter,
     filter_sys->va.conf = VA_INVALID_ID;
     filter_sys->va.ctx = VA_INVALID_ID;
     filter_sys->va.buf = VA_INVALID_ID;
-    filter_sys->va.dec_device =
-        vlc_vaapi_FilterHoldInstance(filter, &filter_sys->va.dpy);
-    if (!filter_sys->va.dec_device)
-        goto error;
+    filter_sys->va.dec_device = vlc_video_context_HoldDevice(filter->vctx_in);
+    filter_sys->va.dpy = filter_sys->va.dec_device->opaque;
+    assert(filter_sys->va.dec_device);
 
     filter_sys->dest_pics =
-        vlc_vaapi_PoolNew(VLC_OBJECT(filter), filter_sys->va.dec_device,
+        vlc_vaapi_PoolNew(VLC_OBJECT(filter), filter->vctx_in,
                           filter_sys->va.dpy, DEST_PICS_POOL_SZ,
-                          &filter_sys->va.surface_ids, &filter->fmt_out.video,
-                          true);
+                          &filter_sys->va.surface_ids, &filter->fmt_out.video);
     if (!filter_sys->dest_pics)
         goto error;
 
@@ -442,6 +378,8 @@ Open(filter_t * filter,
         pf_use_pipeline_caps(p_data, p_pipeline_caps))
         goto error;
 
+    filter->vctx_out = vlc_video_context_Hold(filter->vctx_in);
+
     return VLC_SUCCESS;
 
 error:
@@ -457,7 +395,7 @@ error:
     if (filter_sys->dest_pics)
         picture_pool_Release(filter_sys->dest_pics);
     if (filter_sys->va.dec_device)
-        vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.dec_device);
+        vlc_decoder_device_Release(filter_sys->va.dec_device);
     free(filter_sys);
     return VLC_EGENERIC;
 }
@@ -470,7 +408,8 @@ Close(filter_t *filter, filter_sys_t * filter_sys)
     vlc_vaapi_DestroyBuffer(obj, filter_sys->va.dpy, filter_sys->va.buf);
     vlc_vaapi_DestroyContext(obj, filter_sys->va.dpy, filter_sys->va.ctx);
     vlc_vaapi_DestroyConfig(obj, filter_sys->va.dpy, filter_sys->va.conf);
-    vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.dec_device);
+    vlc_decoder_device_Release(filter_sys->va.dec_device);
+    vlc_video_context_Release(filter->vctx_out);
     free(filter_sys);
 }
 

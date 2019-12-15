@@ -28,8 +28,16 @@
 #include <initguid.h>
 #include "d3d9_fmt.h"
 
-typedef picture_sys_d3d9_t VA_PICSYS;
-#include "../codec/avcodec/va_surface.h"
+#define D3D9_PICCONTEXT_FROM_PICCTX(pic_ctx)  \
+    container_of((pic_ctx), struct d3d9_pic_context, s)
+
+picture_sys_d3d9_t *ActiveD3D9PictureSys(picture_t *pic)
+{
+    assert(pic->context != NULL);
+    assert(pic->p_sys == NULL);
+    struct d3d9_pic_context *pic_ctx = D3D9_PICCONTEXT_FROM_PICCTX(pic->context);
+    return &pic_ctx->picsys;
+}
 
 #undef D3D9_CreateDevice
 HRESULT D3D9_CreateDevice(vlc_object_t *o, d3d9_handle_t *hd3d, int AdapterToUse,
@@ -125,29 +133,6 @@ HRESULT D3D9_CreateDevice(vlc_object_t *o, d3d9_handle_t *hd3d, int AdapterToUse
     msg_Err(o, "failed to create the D3D9%s device %d/%d. (hr=0x%lX)",
                hd3d->use_ex?"Ex":"", AdapterToUse, DeviceType, hr);
     return hr;
-}
-
-HRESULT D3D9_CreateDeviceExternal(IDirect3DDevice9 *dev, d3d9_handle_t *hd3d,
-                                  d3d9_device_t *out)
-{
-    D3DDEVICE_CREATION_PARAMETERS params;
-    HRESULT hr = IDirect3DDevice9_GetCreationParameters(dev, &params);
-    if (FAILED(hr))
-       return hr;
-    out->dev   = dev;
-    out->owner = false;
-    out->adapterId = params.AdapterOrdinal;
-    ZeroMemory(&out->caps, sizeof(out->caps));
-    hr = IDirect3D9_GetDeviceCaps(hd3d->obj, out->adapterId, params.DeviceType, &out->caps);
-    if (FAILED(hr))
-       return hr;
-    D3DDISPLAYMODE d3ddm;
-    hr = IDirect3D9_GetAdapterDisplayMode(hd3d->obj, out->adapterId, &d3ddm);
-    if (FAILED(hr))
-        return hr;
-    IDirect3DDevice9_AddRef(out->dev);
-    out->BufferFormat = d3ddm.Format;
-    return S_OK;
 }
 
 void D3D9_ReleaseDevice(d3d9_device_t *d3d_dev)
@@ -255,16 +240,6 @@ error:
     return VLC_EGENERIC;
 }
 
-int D3D9_CreateExternal(d3d9_handle_t *hd3d, IDirect3DDevice9 *d3d9dev)
-{
-    HRESULT hr = IDirect3DDevice9_GetDirect3D(d3d9dev, &hd3d->obj);
-    if (unlikely(FAILED(hr)))
-        return VLC_EGENERIC;
-    hd3d->hdll = NULL;
-    hd3d->use_ex = false; /* we don't care */
-    return VLC_SUCCESS;
-}
-
 void D3D9_CloneExternal(d3d9_handle_t *hd3d, IDirect3D9 *dev)
 {
     hd3d->obj = dev;
@@ -275,4 +250,26 @@ void D3D9_CloneExternal(d3d9_handle_t *hd3d, IDirect3D9 *dev)
     hd3d->use_ex = SUCCEEDED(IDirect3D9_QueryInterface(dev, &IID_IDirect3D9Ex, &pv));
     if (hd3d->use_ex && pv)
         IDirect3D9Ex_Release((IDirect3D9Ex*) pv);
+}
+
+const struct vlc_video_context_operations d3d9_vctx_ops = {
+    NULL,
+};
+
+void d3d9_pic_context_destroy(picture_context_t *ctx)
+{
+    struct d3d9_pic_context *pic_ctx = D3D9_PICCONTEXT_FROM_PICCTX(ctx);
+    ReleaseD3D9PictureSys(&pic_ctx->picsys);
+    free(pic_ctx);
+}
+
+picture_context_t *d3d9_pic_context_copy(picture_context_t *ctx)
+{
+    struct d3d9_pic_context *pic_ctx = calloc(1, sizeof(*pic_ctx));
+    if (unlikely(pic_ctx==NULL))
+        return NULL;
+    *pic_ctx = *D3D9_PICCONTEXT_FROM_PICCTX(ctx);
+    vlc_video_context_Hold(pic_ctx->s.vctx);
+    AcquireD3D9PictureSys(&pic_ctx->picsys);
+    return &pic_ctx->s;
 }

@@ -124,6 +124,12 @@ static const char *const ppsz_snap_formats[] =
 #define ROLE_TEXT N_("Media role")
 #define ROLE_LONGTEXT N_("Media (player) role for operating system policy.")
 
+#define AUDIO_BITEXACT_TEXT N_("Enable bit-exact mode (pure mode)")
+#define AUDIO_BITEXACT_LONGTEXT N_( \
+    "This will disable all audio filters, even audio converters. " \
+    "This may result on audio not working if the output can't adapt to the " \
+    "input format.")
+
 #define AUDIO_TEXT N_("Enable audio")
 #define AUDIO_LONGTEXT N_( \
     "You can completely disable the audio output. The audio " \
@@ -968,6 +974,7 @@ static const char *const ppsz_prefres[] = {
     "priority.")
 
 #define DEC_DEV_TEXT N_("Preferred decoder hardware device")
+#define DEC_DEV_LONGTEXT N_("This allows hardware decoding when available.")
 
 /*****************************************************************************
  * Sout
@@ -1618,6 +1625,8 @@ vlc_module_begin ()
         change_string_list( ppsz_roles, ppsz_roles_text )
 
     set_subcategory( SUBCAT_AUDIO_AFILTER )
+        add_bool( "audio-bitexact", false, AUDIO_BITEXACT_TEXT,
+                   AUDIO_BITEXACT_LONGTEXT, false )
     add_module_list("audio-filter", "audio filter", NULL,
                     AUDIO_FILTER_TEXT, AUDIO_FILTER_LONGTEXT)
     set_subcategory( SUBCAT_AUDIO_VISUAL )
@@ -1780,7 +1789,6 @@ vlc_module_begin ()
                  SUB_MARGIN_LONGTEXT, true )
     add_integer_with_range( "sub-text-scale", 100, 10, 500,
                SUB_TEXT_SCALE_TEXT, SUB_TEXT_SCALE_LONGTEXT, false )
-        change_volatile  ()
     set_section( N_( "Overlays" ) , NULL )
     add_module_list("sub-source", "sub source", NULL,
                     SUB_SOURCE_TEXT, SUB_SOURCE_LONGTEXT)
@@ -2038,7 +2046,7 @@ vlc_module_begin ()
                 CODEC_LONGTEXT, true )
     add_string( "encoder",  NULL, ENCODER_TEXT,
                 ENCODER_LONGTEXT, true )
-    add_string( "dec-dev", NULL, DEC_DEV_TEXT, NULL, true )
+    add_module("dec-dev", "decoder device", "any", DEC_DEV_TEXT, DEC_DEV_LONGTEXT)
 
     set_subcategory( SUBCAT_INPUT_ACCESS )
     add_category_hint(N_("Input"), INPUT_CAT_LONGTEXT)

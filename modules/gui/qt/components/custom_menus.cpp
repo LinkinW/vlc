@@ -207,7 +207,6 @@ CheckableListMenu::CheckableListMenu(QString title, QAbstractListModel* model , 
     , m_model(model)
 {
     this->setTitle(title);
-    m_actionGroup = new QActionGroup( this );
 
     connect(m_model, &QAbstractListModel::rowsAboutToBeRemoved, this, &CheckableListMenu::onRowsAboutToBeRemoved);
     connect(m_model, &QAbstractListModel::rowsInserted, this, &CheckableListMenu::onRowInserted);
@@ -237,7 +236,6 @@ void CheckableListMenu::onRowInserted(const QModelIndex &, int first, int last)
         bool checked = m_model->data(index, Qt::CheckStateRole).toBool();
 
         QAction *choiceAction = new QAction(title, this);
-        m_actionGroup->addAction(choiceAction);
         addAction(choiceAction);
         connect(choiceAction, &QAction::triggered, [this, i](bool checked){
             QModelIndex dataIndex = m_model->index(i);
@@ -297,18 +295,14 @@ BooleanPropertyAction::BooleanPropertyAction(QString title, QObject *model, QStr
     QMetaProperty property = meta->property(propertyId);
     assert(property.type() ==  QVariant::Bool);
     const QMetaObject* selfMeta = this->metaObject();
-    if (property.hasNotifySignal())
-    {
-        QMetaMethod checkedSlot = selfMeta->method(selfMeta->indexOfSlot( "setChecked(bool)" ));
-        connect( model, property.notifySignal(), this, checkedSlot );
-        connect( this, &BooleanPropertyAction::toggled, this, &BooleanPropertyAction::setModelChecked );
-        setCheckable(true);
-    }
-    else
-    {
-        connect( this, &BooleanPropertyAction::triggered, this, &BooleanPropertyAction::setModelChecked );
-        setCheckable(true);
-    }
+
+    assert(property.hasNotifySignal());
+    QMetaMethod checkedSlot = selfMeta->method(selfMeta->indexOfSlot( "setChecked(bool)" ));
+    connect( model, property.notifySignal(), this, checkedSlot );
+    connect( this, &BooleanPropertyAction::triggered, this, &BooleanPropertyAction::setModelChecked );
+
+    setCheckable(true);
+    setChecked(property.read(model).toBool());
 }
 
 void BooleanPropertyAction::setModelChecked(bool checked)

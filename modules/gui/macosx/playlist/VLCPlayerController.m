@@ -34,8 +34,6 @@
 #import "windows/video/VLCVoutView.h"
 #import "windows/video/VLCVideoWindowCommon.h"
 
-#import <MediaPlayer/MediaPlayer.h>
-
 NSString *VLCPlayerElementaryStreamID = @"VLCPlayerElementaryStreamID";
 NSString *VLCTick = @"VLCTick";
 NSString *VLCPlayerCurrentMediaItemChanged = @"VLCPlayerCurrentMediaItemChanged";
@@ -90,8 +88,9 @@ const CGFloat VLCVolumeDefault = 1.;
     /* remote control support */
     VLCRemoteControlService *_remoteControlService;
 
-    /* iTunes/Spotify play/pause support */
+    /* iTunes/Apple Music/Spotify play/pause support */
     BOOL _iTunesPlaybackWasPaused;
+    BOOL _appleMusicPlaybackWasPaused;
     BOOL _SpotifyPlaybackWasPaused;
 
     NSTimer *_playbackHasTruelyEndedTimer;
@@ -506,18 +505,18 @@ static const struct vlc_player_cbs player_callbacks = {
 
 #pragma mark - video specific callback implementations
 
-static void cb_player_vout_fullscreen_changed(vlc_player_t *p_player, vout_thread_t *p_vout, bool isFullscreen, void *p_data)
+static void cb_player_vout_fullscreen_changed(vout_thread_t *p_vout, bool isFullscreen, void *p_data)
 {
-    VLC_UNUSED(p_player); VLC_UNUSED(p_vout);
+    VLC_UNUSED(p_vout);
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
         [playerController fullscreenChanged:isFullscreen];
     });
 }
 
-static void cb_player_vout_wallpaper_mode_changed(vlc_player_t *p_player, vout_thread_t *p_vout,  bool wallpaperModeEnabled, void *p_data)
+static void cb_player_vout_wallpaper_mode_changed(vout_thread_t *p_vout,  bool wallpaperModeEnabled, void *p_data)
 {
-    VLC_UNUSED(p_player); VLC_UNUSED(p_vout);
+    VLC_UNUSED(p_vout);
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
         [playerController wallpaperModeChanged:wallpaperModeEnabled];
@@ -531,18 +530,18 @@ static const struct vlc_player_vout_cbs player_vout_callbacks = {
 
 #pragma mark - video specific callback implementations
 
-static void cb_player_aout_volume_changed(vlc_player_t *p_player, float volume, void *p_data)
+static void cb_player_aout_volume_changed(audio_output_t *aout, float volume, void *p_data)
 {
-    VLC_UNUSED(p_player);
+    VLC_UNUSED(aout);
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
         [playerController volumeChanged:volume];
     });
 }
 
-static void cb_player_aout_mute_changed(vlc_player_t *p_player, bool muted, void *p_data)
+static void cb_player_aout_mute_changed(audio_output_t *aout, bool muted, void *p_data)
 {
-    VLC_UNUSED(p_player);
+    VLC_UNUSED(aout);
     dispatch_async(dispatch_get_main_queue(), ^{
         VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
         [playerController muteChanged:muted];
@@ -554,6 +553,23 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
     cb_player_aout_mute_changed,
     NULL,
 };
+
+static int BossCallback(vlc_object_t *p_this,
+                        const char *psz_var,
+                        vlc_value_t oldval,
+                        vlc_value_t new_val,
+                        void *p_data)
+{
+    VLC_UNUSED(p_this); VLC_UNUSED(psz_var); VLC_UNUSED(oldval); VLC_UNUSED(new_val);
+    @autoreleasepool {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            VLCPlayerController *playerController = (__bridge VLCPlayerController *)p_data;
+            [playerController pause];
+            [[NSApplication sharedApplication] hide:nil];
+        });
+        return VLC_SUCCESS;
+    }
+}
 
 #pragma mark - controller initialization
 
@@ -567,6 +583,10 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
         [_defaultNotificationCenter addObserver:self
                                        selector:@selector(applicationWillTerminate:)
                                            name:NSApplicationWillTerminateNotification
+                                         object:nil];
+        [_defaultNotificationCenter addObserver:self
+                                       selector:@selector(applicationDidFinishLaunching:)
+                                           name:NSApplicationDidFinishLaunchingNotification
                                          object:nil];
         _position = -1.f;
         _time = VLC_TICK_INVALID;
@@ -583,17 +603,27 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
         _playerVoutListenerID = vlc_player_vout_AddListener(_p_player,
                                                             &player_vout_callbacks,
                                                             (__bridge void *)self);
-        if (@available(macOS 10.12.2, *)) {
-            _remoteControlService = [[VLCRemoteControlService alloc] init];
-            [_remoteControlService subscribeToRemoteCommands];
-        }
+
+        libvlc_int_t *libvlc = vlc_object_instance(getIntf());
+        var_AddCallback(libvlc, "intf-boss", BossCallback, (__bridge void *)self);
     }
 
     return self;
 }
 
+- (void)applicationDidFinishLaunching:(NSNotification *)aNotification
+{
+    if (@available(macOS 10.12.2, *)) {
+        _remoteControlService = [[VLCRemoteControlService alloc] init];
+        [_remoteControlService subscribeToRemoteCommands];
+    }
+}
+
 - (void)applicationWillTerminate:(NSNotification *)aNotification
 {
+    libvlc_int_t *libvlc = vlc_object_instance(getIntf());
+    var_DelCallback(libvlc, "intf-boss", BossCallback, (__bridge void *)self);
+
     [self onPlaybackHasTruelyEnded:nil];
     if (@available(macOS 10.12.2, *)) {
         [_remoteControlService unsubscribeFromRemoteCommands];
@@ -685,36 +715,6 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
 
 - (void)metaDataChangedForInput:(input_item_t *)inputItem
 {
-    if (@available(macOS 10.12.2, *)) {
-        NSMutableDictionary *currentlyPlayingTrackInfo = [NSMutableDictionary dictionary];
-
-        currentlyPlayingTrackInfo[MPMediaItemPropertyPlaybackDuration] = @(SEC_FROM_VLC_TICK(input_item_GetDuration(inputItem)));
-        currentlyPlayingTrackInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = @(SEC_FROM_VLC_TICK([self time]));
-        currentlyPlayingTrackInfo[MPNowPlayingInfoPropertyPlaybackRate] = @([self playbackRate]);
-
-        char *psz_title = input_item_GetTitle(inputItem);
-        if (!psz_title)
-            psz_title = input_item_GetName(inputItem);
-        currentlyPlayingTrackInfo[MPMediaItemPropertyTitle] = toNSStr(psz_title);
-        FREENULL(psz_title);
-
-        char *psz_artist = input_item_GetArtist(inputItem);
-        currentlyPlayingTrackInfo[MPMediaItemPropertyArtist] = toNSStr(psz_artist);
-        FREENULL(psz_artist);
-
-        char *psz_album = input_item_GetAlbum(inputItem);
-        currentlyPlayingTrackInfo[MPMediaItemPropertyAlbumTitle] = toNSStr(psz_album);
-        FREENULL(psz_album);
-
-        char *psz_track_number = input_item_GetTrackNumber(inputItem);
-        currentlyPlayingTrackInfo[MPMediaItemPropertyAlbumTrackNumber] = @([toNSStr(psz_track_number) intValue]);
-        FREENULL(psz_track_number);
-
-        [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = currentlyPlayingTrackInfo;
-    }
-
-    input_item_Release(inputItem);
-
     [_defaultNotificationCenter postNotificationName:VLCPlayerMetadataChangedForCurrentMedia
                                               object:self];
 }
@@ -811,27 +811,6 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
     [_defaultNotificationCenter postNotificationName:VLCPlayerStateChanged
                                               object:self];
 
-    if (@available(macOS 10.12.2, *)) {
-        switch (_playerState) {
-            case VLC_PLAYER_STATE_PLAYING:
-                [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStatePlaying;
-                break;
-
-            case VLC_PLAYER_STATE_PAUSED:
-                [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStatePaused;
-                break;
-
-            case VLC_PLAYER_STATE_STOPPED:
-            case VLC_PLAYER_STATE_STOPPING:
-                [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStateStopped;
-                break;
-
-            default:
-                [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStateUnknown;
-                break;
-        }
-    }
-
     /* notify third party apps through an informal protocol that our state changed */
     [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"VLCPlayerStateDidChange"
                                                                    object:nil
@@ -884,6 +863,17 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
         }
     }
 
+    if (!_appleMusicPlaybackWasPaused) {
+        iTunesApplication *iTunesApp = (iTunesApplication *) [SBApplication applicationWithBundleIdentifier:@"com.apple.Music"];
+        if (iTunesApp && [iTunesApp isRunning]) {
+            if ([iTunesApp playerState] == iTunesEPlSPlaying) {
+                msg_Dbg(p_intf, "pausing Apple Music");
+                [iTunesApp pause];
+                _appleMusicPlaybackWasPaused = YES;
+            }
+        }
+    }
+
     // pause Spotify
     if (!_SpotifyPlaybackWasPaused) {
         SpotifyApplication *spotifyApp = (SpotifyApplication *) [SBApplication applicationWithBundleIdentifier:@"com.spotify.client"];
@@ -913,6 +903,16 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
             }
         }
 
+        if (_appleMusicPlaybackWasPaused) {
+            iTunesApplication *iTunesApp = (iTunesApplication *) [SBApplication applicationWithBundleIdentifier:@"com.apple.Music"];
+            if (iTunesApp && [iTunesApp isRunning]) {
+                if ([iTunesApp playerState] == iTunesEPlSPaused) {
+                    msg_Dbg(p_intf, "unpausing Apple Music");
+                    [iTunesApp playpause];
+                }
+            }
+        }
+
         if (_SpotifyPlaybackWasPaused) {
             SpotifyApplication *spotifyApp = (SpotifyApplication *) [SBApplication applicationWithBundleIdentifier:@"com.spotify.client"];
             if (spotifyApp) {
@@ -927,6 +927,7 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
     }
 
     _iTunesPlaybackWasPaused = NO;
+    _appleMusicPlaybackWasPaused = NO;
     _SpotifyPlaybackWasPaused = NO;
 }
 
@@ -1387,10 +1388,11 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
     [_defaultNotificationCenter postNotificationName:VLCPlayerTrackListChanged object:nil];
 }
 
-- (void)selectTrack:(VLCTrackMetaData *)track
+- (void)selectTrack:(VLCTrackMetaData *)track exclusively:(BOOL)exclusiveSelection
 {
     vlc_player_Lock(_p_player);
-    vlc_player_SelectEsId(_p_player, track.esID, VLC_PLAYER_SELECT_EXCLUSIVE);
+    const enum es_format_category_e formatCategory = vlc_es_id_GetCat(track.esID);
+    vlc_player_SelectEsId(_p_player, track.esID, (formatCategory == AUDIO_ES || exclusiveSelection) ? VLC_PLAYER_SELECT_EXCLUSIVE : VLC_PLAYER_SELECT_SIMULTANEOUS);
     vlc_player_Unlock(_p_player);
 }
 
@@ -1652,7 +1654,7 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
 
 - (void)displayOSDMessage:(NSString *)message
 {
-    vlc_player_vout_OSDMessage(_p_player, [message UTF8String]);
+    vlc_player_osd_Message(_p_player, [message UTF8String]);
 }
 
 - (void)setAspectRatioIsLocked:(BOOL)b_value
@@ -1767,7 +1769,7 @@ static const struct vlc_player_aout_cbs player_aout_callbacks = {
 
 - (NSString *)description
 {
-    return [NSString stringWithFormat:@"%@: name: %@", [VLCTrackMetaData className], self.name];
+    return [NSString stringWithFormat:@"%@: name: %@, selected: %i", [VLCTrackMetaData className], self.name, self.selected];
 }
 
 @end

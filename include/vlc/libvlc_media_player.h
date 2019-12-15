@@ -268,11 +268,17 @@ LIBVLC_API void libvlc_media_player_set_pause ( libvlc_media_player_t *mp,
 LIBVLC_API void libvlc_media_player_pause ( libvlc_media_player_t *p_mi );
 
 /**
- * Stop (no effect if there is no media)
+ * Stop asynchronously
+ *
+ * \note This function is asynchronous. In case of success, the user should
+ * wait for the libvlc_MediaPlayerStopped event to know when the stop is
+ * finished.
  *
  * \param p_mi the Media Player
+ * \return 0 if the player is being stopped, -1 otherwise (no-op)
+ * \version LibVLC 4.0.0 or later
  */
-LIBVLC_API void libvlc_media_player_stop_async ( libvlc_media_player_t *p_mi );
+LIBVLC_API int libvlc_media_player_stop_async ( libvlc_media_player_t *p_mi );
 
 /**
  * Set a renderer to the media player
@@ -807,10 +813,10 @@ bool libvlc_video_direct3d_set_callbacks( libvlc_media_player_t *mp,
  * protocol:
  *
  * @code{.m}
- * \@protocol VLCVideoViewEmbedding <NSObject>
+ * @protocol VLCVideoViewEmbedding <NSObject>
  * - (void)addVoutSubview:(NSView *)view;
  * - (void)removeVoutSubview:(NSView *)view;
- * \@end
+ * @end
  * @endcode
  *
  * Or it can be an NSView object.
@@ -1955,21 +1961,6 @@ LIBVLC_API void libvlc_video_set_adjust_float( libvlc_media_player_t *p_mi,
 /** \defgroup libvlc_audio LibVLC audio controls
  * @{
  */
-
-/**
- * Audio device types
- */
-typedef enum libvlc_audio_output_device_types_t {
-    libvlc_AudioOutputDevice_Error  = -1,
-    libvlc_AudioOutputDevice_Mono   =  1,
-    libvlc_AudioOutputDevice_Stereo =  2,
-    libvlc_AudioOutputDevice_2F2R   =  4,
-    libvlc_AudioOutputDevice_3F2R   =  5,
-    libvlc_AudioOutputDevice_5_1    =  6,
-    libvlc_AudioOutputDevice_6_1    =  7,
-    libvlc_AudioOutputDevice_7_1    =  8,
-    libvlc_AudioOutputDevice_SPDIF  = 10
-} libvlc_audio_output_device_types_t;
 
 /**
  * Audio channels

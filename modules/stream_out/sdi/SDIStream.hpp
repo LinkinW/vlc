@@ -85,6 +85,7 @@ namespace sdi_sout
         public:
             StreamID(int);
             StreamID(int, int);
+            StreamID(const StreamID &) = default;
             StreamID& operator=(const StreamID &);
             bool      operator==(const StreamID &) const;
             std::string toString() const;
@@ -137,6 +138,7 @@ namespace sdi_sout
             static void *decoderThreadCallback(void *);
             void decoderThread();
             void deinit();
+            virtual void ReleaseDecoder();
             es_format_t requestedoutput;
             std::queue<block_t *> inputQueue;
             vlc_mutex_t inputLock;
@@ -166,8 +168,10 @@ namespace sdi_sout
             static void VideoDecCallback_queue(decoder_t *, picture_t *);
             static void VideoDecCallback_queue_cc( decoder_t *, block_t *,
                                                    const decoder_cc_desc_t * );
-            static int VideoDecCallback_update_format(decoder_t *);
-            filter_chain_t * VideoFilterCreate(const es_format_t *);
+            static vlc_decoder_device * VideoDecCallback_get_device(decoder_t *);
+            static int VideoDecCallback_update_format(decoder_t *, vlc_video_context *);
+            filter_chain_t * VideoFilterCreate(const es_format_t *, vlc_video_context *);
+            virtual void ReleaseDecoder();
             void Output(picture_t *);
             void QueueCC(block_t *);
             filter_chain_t *p_filters_chain;

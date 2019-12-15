@@ -83,8 +83,7 @@ void TrackListModel::updateTracks(vlc_player_list_action action, const vlc_playe
         beginInsertRows({}, m_data.size(), m_data.size());
         m_data.append(Data{ track_info });
         endInsertRows();
-        QModelIndex dataIndex = index(m_data.size() - 1);
-        emit dataChanged(dataIndex, dataIndex);
+        emit countChanged();
         break;
     }
     case VLC_PLAYER_LIST_REMOVED:
@@ -99,8 +98,7 @@ void TrackListModel::updateTracks(vlc_player_list_action action, const vlc_playe
         beginRemoveRows({}, pos, pos);
         m_data.erase(it);
         endRemoveRows();
-        QModelIndex dataIndex = index(pos);
-        emit dataChanged(dataIndex, dataIndex);
+        emit countChanged();
         break;
     }
     case VLC_PLAYER_LIST_UPDATED:
@@ -257,6 +255,7 @@ void TitleListModel::resetTitles(vlc_player_title_list *newTitleList)
     else
         m_count = 0;
     endResetModel();
+    emit countChanged();
 }
 
 QHash<int, QByteArray> TitleListModel::roleNames() const
@@ -354,6 +353,7 @@ void ChapterListModel::resetTitle(const vlc_player_title *newTitle)
     m_title =newTitle;
     m_current = -1;
     endResetModel();
+    emit countChanged();
 }
 
 QString ChapterListModel::getNameAtPosition(float pos) const
@@ -437,6 +437,7 @@ void ProgramListModel::updatePrograms(vlc_player_list_action action, const vlc_p
         beginInsertRows({}, m_data.size(), m_data.size());
         m_data.append(Data{ program });
         endInsertRows();
+        emit countChanged();
         break;
 
     case VLC_PLAYER_LIST_REMOVED:
@@ -450,6 +451,7 @@ void ProgramListModel::updatePrograms(vlc_player_list_action action, const vlc_p
         beginRemoveRows({}, pos, pos);
         m_data.erase(it);
         endRemoveRows();
+        emit countChanged();
         break;
     }
     case VLC_PLAYER_LIST_UPDATED:

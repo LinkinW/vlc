@@ -49,9 +49,8 @@ vlc_module_begin()
     set_subcategory(SUBCAT_VIDEO_VOUT)
     set_shortname("OpenGL")
     set_description(N_("OpenGL video output for Windows"))
-    set_capability("vout display", 275)
     add_shortcut("glwin32", "opengl")
-    set_callbacks(Open, Close)
+    set_callback_display(Open, 275)
     add_glopts()
 vlc_module_end()
 
@@ -167,6 +166,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     vd->prepare = Prepare;
     vd->display = Display;
     vd->control = Control;
+    vd->close = Close;
 
     return VLC_SUCCESS;
 

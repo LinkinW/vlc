@@ -74,6 +74,7 @@ struct vout_display_sys_t
 static void PictureRender(vout_display_t *, picture_t *, subpicture_t *, mtime_t);
 static void PictureDisplay(vout_display_t *, picture_t *);
 static int Control(vout_display_t *, int, va_list);
+static void Close(vout_display_t *);
 static void UpdateParams(vout_display_t *);
 
 // Allocates a Vulkan surface and instance for video output.
@@ -141,6 +142,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     vd->prepare = PictureRender;
     vd->display = PictureDisplay;
     vd->control = Control;
+    vd->close = Close;
 
     UpdateParams(vd);
     (void) cfg; (void) context;
@@ -368,12 +370,12 @@ static int Control(vout_display_t *vd, int query, va_list ap)
 #define DISABLE_DR_TEXT "Disable direct rendering / zero-copy upload"
 #define DISABLE_DR_LONGTEXT "Direct rendering is a technique where image data is uploaded via a mapped buffer instead of via memcpy. On some platforms this might be very slow (due to poor readback performance from mapped memory), in which cases this flag would help."
 
-vlc_module_begin () set_shortname ("Vulkan")
+vlc_module_begin ()
+    set_shortname ("Vulkan")
     set_description (N_("Vulkan video output"))
     set_category (CAT_VIDEO)
     set_subcategory (SUBCAT_VIDEO_VOUT)
-    set_capability ("vout display", 0)
-    set_callbacks (Open, Close)
+    set_callback_display(Open, 0)
     add_shortcut ("vulkan", "vk")
     add_module ("vk", "vulkan", NULL, VK_TEXT, PROVIDER_LONGTEXT)
 

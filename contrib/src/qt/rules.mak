@@ -49,7 +49,6 @@ endif
 
 endif
 	$(APPLY) $(SRC)/qt/0001-qmake-Always-split-QMAKE_DEFAULT_LIBDIRS-using-with-.patch
-	
 	$(APPLY) $(SRC)/qt/0001-generate-different-pkg-config-files-for-debug-and-re.patch
 	$(APPLY) $(SRC)/qt/0001-include-MODULE_AUX_INCLUDES-in-the-generated-.pc-fil.patch
 	$(MOVE)
@@ -101,7 +100,9 @@ endif
 ENV_VARS := $(HOSTVARS) DXSDK_DIR=$(PREFIX)/bin
 
 .qt: qt
-	cd $< && $(ENV_VARS) ./configure $(QT_PLATFORM) $(QT_CONFIG) -prefix $(PREFIX) -I $(PREFIX)/include
+	# Prevent all Qt contribs from generating and installing libtool .la files
+	cd $< && sed -i "/CONFIG/ s/ create_libtool/ -create_libtool/g" mkspecs/features/qt_module.prf
+	+cd $< && $(ENV_VARS) ./configure $(QT_PLATFORM) $(QT_CONFIG) -prefix $(PREFIX) -I $(PREFIX)/include
 	# Make && Install libraries
 	cd $< && $(ENV_VARS) $(MAKE)
 	cd $< && $(MAKE) -C src sub-corelib-install_subtargets sub-gui-install_subtargets sub-widgets-install_subtargets sub-platformsupport-install_subtargets sub-zlib-install_subtargets sub-bootstrap-install_subtargets sub-network-install_subtargets sub-testlib-install_subtargets

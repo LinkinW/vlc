@@ -17,6 +17,7 @@
  *****************************************************************************/
 import QtQuick 2.11
 import QtQuick.Controls 2.4
+import "KeyHelper.js" as KeyHelper
 
 /*
  * This class is designed to be inherited, It provide basic key handling to navigate between view
@@ -33,24 +34,134 @@ FocusScope {
     signal actionRight( int index )
     signal actionCancel( int index )
 
+    property bool navigable: true
+
+    property var navigationParent: undefined
+    property var navigationUp: defaultNavigationUp
+    property var navigationDown: defaultNavigationDown
+    property var navigationLeft: defaultNavigationLeft
+    property var navigationRight: defaultNavigationRight
+    property var navigationCancel: defaultNavigationCancel
+
+    property var navigationUpItem: undefined
+    property var navigationDownItem: undefined
+    property var navigationLeftItem: undefined
+    property var navigationRightItem: undefined
+    property var navigationCancelItem: undefined
+
+
+    function defaultNavigationUp(index) {
+        if (navigationUpItem) {
+            var item = navigationUpItem
+            while (item && (!item.visible || !item.enabled || !(item.navigable === undefined || item.navigable))) {
+                item = item.navigationUpItem
+            }
+            if (item) {
+                item.forceActiveFocus()
+            }
+        } else if (navigationParent) {
+            navigationParent.navigationUp(index)
+        } else {
+            actionUp(index)
+        }
+    }
+
+    function defaultNavigationDown(index) {
+        if (navigationDownItem) {
+            var item = navigationDownItem
+            while (item && (!item.visible || !item.enabled || !(item.navigable === undefined || item.navigable))) {
+                item = item.navigationDownItem
+            }
+            if (item) {
+                item.forceActiveFocus()
+            }
+        } else if (navigationParent) {
+            navigationParent.navigationDown(index)
+        } else {
+            actionDown(index)
+        }
+    }
+
+    function defaultNavigationLeft(index) {
+        if (navigationLeftItem) {
+            var item = navigationLeftItem
+            while (item && (!item.visible || !item.enabled || !(item.navigable === undefined || item.navigable))) {
+                item = item.navigationLeftItem
+            }
+            if (item) {
+                item.forceActiveFocus()
+            }
+        } else if (navigationParent) {
+            navigationParent.navigationLeft(index)
+        } else {
+            actionLeft(index)
+        }
+    }
+
+    function defaultNavigationRight(index) {
+        if (navigationRightItem) {
+            var item = navigationRightItem
+            while (item && (!item.visible || !item.enabled || !(item.navigable === undefined || item.navigable))) {
+                item = item.navigationRightItem
+            }
+            if (item) {
+                item.forceActiveFocus()
+            }
+        } else if (navigationParent) {
+            navigationParent.navigationRight(index)
+        } else {
+            actionRight(index)
+        }
+    }
+
+    function defaultNavigationCancel(index) {
+        if (navigationCancelItem) {
+            var item = navigationCancelItem
+            while (item && (!item.visible || !item.enabled || !(item.navigable === undefined || item.navigable))) {
+                item = item.navigationCancelItem
+            }
+            if (item) {
+                item.forceActiveFocus()
+            }
+        } else if (navigationParent) {
+            navigationParent.navigationCancel(index)
+        } else {
+            actionCancel(index)
+        }
+    }
+
     function defaultKeyAction(event, index) {
         if (event.accepted)
             return
-        if ( event.key === Qt.Key_Down || event.matches(StandardKey.MoveToNextLine) ||event.matches(StandardKey.SelectNextLine) ) {
+        if ( KeyHelper.matchDown(event) ) {
             event.accepted = true
-            actionDown( index )
-        } else if ( event.key === Qt.Key_Up || event.matches(StandardKey.MoveToPreviousLine) ||event.matches(StandardKey.SelectPreviousLine) ) {
+            navigationDown( index )
+        } else if ( KeyHelper.matchUp(event) ) {
             event.accepted = true
-            actionUp( index  )
-        } else if (event.key === Qt.Key_Right || event.matches(StandardKey.MoveToNextChar) ) {
+            navigationUp( index  )
+        } else if ( KeyHelper.matchRight(event) ) {
             event.accepted = true
-            actionRight( index )
-        } else if (event.key === Qt.Key_Left || event.matches(StandardKey.MoveToPreviousChar) ) {
+            navigationRight( index )
+        } else if ( KeyHelper.matchLeft(event) ) {
             event.accepted = true
-            actionLeft( index )
-        } else if ( event.key === Qt.Key_Back || event.key === Qt.Key_Cancel || event.matches(StandardKey.Back) || event.matches(StandardKey.Cancel)) {
+            navigationLeft( index )
+        } else if ( KeyHelper.matchCancel(event) ) {
             event.accepted = true
-            actionCancel( index )
+            navigationCancel( index )
+        }
+    }
+
+    function defaultKeyReleaseAction(event, index) {
+        if (event.accepted)
+            return
+
+        if ( KeyHelper.matchLeft(event)
+                || KeyHelper.matchRight(event)
+                || KeyHelper.matchUp(event)
+                || KeyHelper.matchDown(event)
+                || KeyHelper.matchCancel(event) )
+        {
+            event.accepted = true
         }
     }
 }

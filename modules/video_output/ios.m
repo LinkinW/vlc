@@ -73,8 +73,7 @@ vlc_module_begin ()
     set_description("iOS OpenGL video output")
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VOUT)
-    set_capability("vout display", 300)
-    set_callbacks(Open, Close)
+    set_callback_display(Open, 300)
 
     add_shortcut("vout_ios2", "vout_ios")
     add_glopts()
@@ -212,6 +211,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
         vd->prepare = PictureRender;
         vd->display = PictureDisplay;
         vd->control = Control;
+        vd->close   = Close;
 
         return VLC_SUCCESS;
 
@@ -688,10 +688,6 @@ static void GLESSwap(vlc_gl_t *gl)
         _placeInvalidated = YES;
         _place = place;
     }
-
-    vout_display_sys_t *sys = _voutDisplay->sys;
-    vout_window_ReportSize(sys->embed, _viewSize.width * _scaleFactor,
-                           _viewSize.height * _scaleFactor);
 
     vlc_mutex_unlock(&_mutex);
 }

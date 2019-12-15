@@ -18,6 +18,7 @@ endif
 	$(APPLY) $(SRC)/gpg-error/missing-unistd-include.patch
 	$(APPLY) $(SRC)/gpg-error/no-executable.patch
 	$(APPLY) $(SRC)/gpg-error/win32-unicode.patch
+	$(APPLY) $(SRC)/gpg-error/version-bump-gawk-5.patch
 	$(MOVE)
 ifdef HAVE_ANDROID
 ifeq ($(ARCH),aarch64)
@@ -32,7 +33,9 @@ ifdef HAVE_ARMV7A
 	cp $@/src/syscfg/lock-obj-pub.arm-apple-darwin.h $@/src/syscfg/lock-obj-pub.$(HOST).h
 else
 ifeq ($(ARCH),aarch64)
+ifneq ($(HOST),aarch64-apple-darwin)
 	cp $@/src/syscfg/lock-obj-pub.aarch64-apple-darwin.h $@/src/syscfg/lock-obj-pub.$(HOST).h
+endif
 else
 	cp $@/src/syscfg/lock-obj-pub.x86_64-apple-darwin.h $@/src/syscfg/lock-obj-pub.$(HOST).h
 endif

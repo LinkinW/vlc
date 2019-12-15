@@ -18,20 +18,6 @@
 
 #include "mlalbummodel.hpp"
 
-namespace {
-    enum Roles
-    {
-        ALBUM_ID = Qt::UserRole + 1,
-        ALBUM_TITLE,
-        ALBUM_RELEASE_YEAR,
-        ALBUM_SHORT_SUMMARY,
-        ALBUM_COVER,
-        ALBUM_MAIN_ARTIST,
-        ALBUM_NB_TRACKS,
-        ALBUM_DURATION
-    };
-}
-
 QHash<QByteArray, vlc_ml_sorting_criteria_t> MLAlbumModel::M_names_to_criteria = {
     {"id", VLC_ML_SORTING_DEFAULT},
     {"title", VLC_ML_SORTING_ALBUM},
@@ -103,7 +89,7 @@ std::vector<std::unique_ptr<MLAlbum>> MLAlbumModel::fetch( )
         return {};
     std::vector<std::unique_ptr<MLAlbum>> res;
     for( const vlc_ml_album_t& album: ml_range_iterate<vlc_ml_album_t>( album_list ) )
-        res.emplace_back( new MLAlbum( m_ml, &album ) );
+        res.emplace_back( std::make_unique<MLAlbum>( m_ml, &album ) );
     return res;
 }
 

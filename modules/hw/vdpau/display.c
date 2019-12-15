@@ -46,8 +46,7 @@ vlc_module_begin()
     set_description(N_("VDPAU output"))
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VOUT)
-    set_capability("vout display", 0)
-    set_callbacks(Open, Close)
+    set_callback_display(Open, 0)
 
     add_shortcut("vdpau")
 vlc_module_end()
@@ -286,49 +285,38 @@ static int Control(vout_display_t *vd, int query, va_list ap)
     return VLC_SUCCESS;
 }
 
-static int xcb_screen_num(xcb_connection_t *conn, const xcb_screen_t *screen)
-{
-    const xcb_setup_t *setup = xcb_get_setup(conn);
-    unsigned snum = 0;
-
-    for (xcb_screen_iterator_t i = xcb_setup_roots_iterator(setup);
-         i.rem > 0; xcb_screen_next(&i))
-    {
-        if (i.data->root == screen->root)
-            return snum;
-        snum++;
-    }
-    return -1;
-}
-
 static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
                 video_format_t *fmtp, vlc_video_context *context)
 {
-    if (!vlc_xlib_init(VLC_OBJECT(vd)))
-        return VLC_EGENERIC;
-
     vout_display_sys_t *sys = malloc(sizeof (*sys));
     if (unlikely(sys == NULL))
         return VLC_ENOMEM;
 
     const xcb_screen_t *screen;
-    if (vlc_xcb_parent_Create(vd, cfg, &sys->conn, &screen) == NULL)
+    if (vlc_xcb_parent_Create(vd, cfg->window, &sys->conn, &screen) != VLC_SUCCESS)
     {
         free(sys);
         return VLC_EGENERIC;
     }
 
-    /* Load the VDPAU back-end and create a device instance */
-    VdpStatus err = vdp_get_x11(cfg->window->display.x11,
-                                xcb_screen_num(sys->conn, screen),
-                                &sys->vdp, &sys->device);
-    if (err != VDP_STATUS_OK)
+    vlc_decoder_device *dec_device = context ? vlc_video_context_HoldDevice(context) : NULL;
+    if (dec_device == NULL)
+        goto error;
+
+    vdpau_decoder_device_t *vdpau_decoder = GetVDPAUOpaqueDevice(dec_device);
+    if (vdpau_decoder == NULL)
     {
-        msg_Dbg(vd, "device creation failure: error %d", (int)err);
-        xcb_disconnect(sys->conn);
-        free(sys);
-        return VLC_EGENERIC;
+        vlc_decoder_device_Release(dec_device);
+        goto error;
     }
+
+    // get the vdp/device from the decoder device, it is always matching the same
+    // window configuration use to create the XCB connection that was used to
+    // create the decoder device
+    sys->vdp    = vdpau_decoder->vdp;
+    sys->device = vdpau_decoder->device;
+
+    vlc_decoder_device_Release(dec_device);
 
     const char *info;
     if (vdp_get_information_string(sys->vdp, &info) == VDP_STATUS_OK)
@@ -338,6 +326,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     video_format_t fmt;
     VdpChromaType chroma;
     VdpYCbCrFormat format;
+    VdpStatus err;
 
     video_format_ApplyRotation(&fmt, fmtp);
 
@@ -504,12 +493,12 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     vd->prepare = Queue;
     vd->display = Wait;
     vd->control = Control;
+    vd->close = Close;
 
     (void) context;
     return VLC_SUCCESS;
 
 error:
-    vdp_release_x11(sys->vdp);
     xcb_disconnect(sys->conn);
     free(sys);
     return VLC_EGENERIC;
@@ -525,7 +514,6 @@ static void Close(vout_display_t *vd)
     if (sys->current != NULL)
         picture_Release(sys->current);
 
-    vdp_release_x11(sys->vdp);
     xcb_disconnect(sys->conn);
     free(sys);
 }

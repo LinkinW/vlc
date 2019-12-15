@@ -28,7 +28,7 @@
 #include <assert.h>
 #include <stdatomic.h>
 
-#if defined (HAVE_MNTENT_H) && defined(HAVE_SYS_STAT_H)
+#ifdef HAVE_GETMNTENT_R
 # include <mntent.h>
 #endif
 #include <fcntl.h>      /* O_* */
@@ -400,11 +400,16 @@ static bool es_pair_Add(vlc_array_t *p_array, const es_format_t *p_fmt,
     return p_pair != NULL;
 }
 
+static void es_pair_Delete(es_pair_t *p_pair)
+{
+    es_format_Clean(&p_pair->fmt);
+    free(p_pair);
+}
+
 static void es_pair_Remove(vlc_array_t *p_array, es_pair_t *p_pair)
 {
     vlc_array_remove(p_array, vlc_array_index_of_item(p_array, p_pair));
-    es_format_Clean(&p_pair->fmt);
-    free(p_pair);
+    es_pair_Delete(p_pair);
 }
 
 static es_pair_t *getEsPair(vlc_array_t *p_array,
@@ -545,7 +550,7 @@ static void  notifyDiscontinuityToParser( demux_sys_t *p_sys );
 static void FindMountPoint(char **file)
 {
     char *device = *file;
-#if defined (HAVE_MNTENT_H) && defined (HAVE_SYS_STAT_H)
+#ifdef HAVE_GETMNTENT_R
     /* bd path may be a symlink (e.g. /dev/dvd -> /dev/sr0), so make sure
      * we look up the real device */
     char *bd_device = realpath(device, NULL);
@@ -1571,7 +1576,7 @@ static void bluray_esOutDestroy(es_out_t *p_out)
     bluray_esout_priv_t *esout_priv = container_of(p_out, bluray_esout_priv_t, es_out);
 
     for (size_t i = 0; i < vlc_array_count(&esout_priv->es); ++i)
-        free(vlc_array_item_at_index(&esout_priv->es, i));
+        es_pair_Delete(vlc_array_item_at_index(&esout_priv->es, i));
     vlc_array_clear(&esout_priv->es);
     vlc_mutex_destroy(&esout_priv->lock);
     free(esout_priv);

@@ -54,7 +54,9 @@ endif
 
 libxdg_screensaver_plugin_la_SOURCES = misc/inhibit/xdg.c
 if HAVE_XCB
+if !HAVE_WIN32
 misc_LTLIBRARIES += libxdg_screensaver_plugin.la
+endif
 endif
 
 libdbus_screensaver_plugin_la_SOURCES = misc/inhibit/dbus.c
@@ -68,6 +70,7 @@ libwl_idle_inhibit_plugin_la_SOURCES = misc/inhibit/wl-idle-inhibit.c
 nodist_libwl_idle_inhibit_plugin_la_SOURCES = \
 	misc/inhibit/idle-inhibit-client-protocol.h \
 	misc/inhibit/idle-inhibit-protocol.c
+libwl_idle_inhibit_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/misc/inhibit
 libwl_idle_inhibit_plugin_la_CFLAGS = $(WAYLAND_CLIENT_CFLAGS)
 libwl_idle_inhibit_plugin_la_LIBADD = $(WAYLAND_CLIENT_LIBS)
 if HAVE_WAYLAND
